@@ -18,13 +18,11 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 # Basic configuration
-PLATFORM = "xhs"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
-KEYWORDS = "编程副业,编程兼职"  # Keyword search configuration, separated by English commas
+PLATFORM = "dy"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
+KEYWORDS = "张家界"  # Keyword search configuration, separated by English commas
 LOGIN_TYPE = "qrcode"  # qrcode or phone or cookie
 COOKIES = ""
-CRAWLER_TYPE = (
-    "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
-)
+CRAWLER_TYPE = "search"  # Crawling type, search (keyword search) | detail (post details) | creator (creator homepage data)
 # Whether to enable IP proxy
 ENABLE_IP_PROXY = False
 
@@ -100,6 +98,9 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
 ENABLE_GET_SUB_COMMENTS = False
+
+# 评论采集时间范围（小时），0 代表不限制。例如：24 代表只采集最近 24 小时内的评论。
+COMMENT_TIME_FILTER_H = 24
 
 # word cloud related
 # Whether to enable generating comment word clouds
