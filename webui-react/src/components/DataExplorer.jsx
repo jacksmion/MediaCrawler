@@ -6,7 +6,9 @@ const DATA_DIR_MAPPING = {
   dy: '抖音',
   ks: '快手',
   bili: 'Bilibili',
-  wb: '微博',
+  wb: '新浪微博',
+  tieba: '百度贴吧',
+  zhihu: '知乎',
 };
 
 export default function DataExplorer() {
@@ -75,9 +77,14 @@ export default function DataExplorer() {
               <tr key={file.path} className="hover:bg-slate-800/40 transition-colors group">
                 <td className="px-6 py-4 flex items-center space-x-3">
                   <DocumentIcon className="w-5 h-5 text-blue-500" />
-                  <span className="font-medium text-slate-200">{file.name}</span>
+                  <div className="flex flex-col">
+                    <span className="font-medium text-slate-200">{file.name}</span>
+                    <span className="text-[9px] w-fit px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-bold border border-slate-700 mt-1 uppercase">
+                      {DATA_DIR_MAPPING[file.path.split(/[/\\]/)[0]] || 'Unknown'}
+                    </span>
+                  </div>
                 </td>
-                <td className="px-6 py-4 text-slate-400">{file.record_count || '-'}</td>
+                <td className="px-6 py-4 text-slate-400 font-mono text-xs">{file.record_count || '-'}</td>
                 <td className="px-6 py-4 text-slate-400">{(file.size / 1024).toFixed(1)} KB</td>
                 <td className="px-6 py-4 text-slate-500">{new Date(file.modified_at * 1000).toLocaleString()}</td>
                 <td className="px-6 py-4 text-right space-x-2">
