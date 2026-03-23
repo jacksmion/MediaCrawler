@@ -23,6 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -228,3 +229,43 @@ async def get_data_stats():
                 continue
 
     return stats
+
+@router.get("/stats/trends")
+async def get_data_trends(days: int = 7):
+    """Get weekly data trends based on modification time"""
+    if not DATA_DIR.exists():
+        return {"trends": []}
+
+    trends = {}
+    today = datetime.now().date()
+    
+    # Pre-fill last N days with 0
+    for i in range(days):
+        date_str = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        trends[date_str] = 0
+
+    supported_extensions = {".json", ".jsonl", ".csv", ".xlsx", ".xls"}
+    
+    for root, dirs, filenames in os.walk(DATA_DIR):
+        for filename in filenames:
+            file_path = Path(root) / filename
+            if file_path.suffix.lower() not in supported_extensions:
+                continue
+                
+            try:
+                stat = file_path.stat()
+                mtime = datetime.fromtimestamp(stat.st_mtime).date()
+                date_str = mtime.strftime("%Y-%m-%d")
+                
+                if date_str in trends:
+                    # Try to count records (from get_file_info)
+                    info = get_file_info(file_path)
+                    count = info.get("record_count") or 0
+                    trends[date_str] += count
+            except Exception:
+                continue
+
+    # Convert to list of objects for ECharts/ChartJS
+    result = [{"date": d, "count": c} for d, c in sorted(trends.items())]
+    
+    return {"trends": result}
