@@ -18,6 +18,23 @@ export default function AccountCenter() {
     }
   };
 
+  const handleLogin = async (platform) => {
+    try {
+      const res = await fetch(`http://${window.location.hostname}:8080/api/account/login?platform=${platform}`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+      } else {
+        alert('错误: ' + data.message);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('请求发送失败，请检查网络');
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
   }, []);
@@ -73,6 +90,7 @@ export default function AccountCenter() {
             </div>
 
             <button 
+              onClick={() => handleLogin(account.platform)}
               className={`w-full py-2 rounded-xl text-sm font-bold transition-all ${account.is_logged_in ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40'}`}
             >
               {account.is_logged_in ? '重新登录' : '拉起登录扫码'}

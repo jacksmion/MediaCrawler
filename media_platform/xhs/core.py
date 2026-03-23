@@ -106,6 +106,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 )
                 await login_obj.begin()
                 await self.xhs_client.update_cookies(browser_context=self.browser_context)
+            
+            if config.CRAWLER_TYPE == "login":
+                utils.logger.info("[XiaoHongShuCrawler.start] Login mode, exiting...")
+                return
 
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":

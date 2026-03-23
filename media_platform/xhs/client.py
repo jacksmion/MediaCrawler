@@ -132,10 +132,10 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
         if response.status_code == 471 or response.status_code == 461:
-            # someday someone maybe will bypass captcha
-            verify_type = response.headers["Verifytype"]
-            verify_uuid = response.headers["Verifyuuid"]
-            msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
+            # handle cases where Verifytype/Verifyuuid headers are missing
+            verify_type = response.headers.get("Verifytype", "Unknown")
+            verify_uuid = response.headers.get("Verifyuuid", "Unknown")
+            msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response.text}"
             utils.logger.error(msg)
             raise Exception(msg)
 
@@ -423,11 +423,12 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             
             # Filter comments by time if needed
             if config.COMMENT_TIME_FILTER_H > 0:
-                now_ts = utils.get_current_timestamp() / 1000
-                threshold_ts = now_ts - (config.COMMENT_TIME_FILTER_H * 3600)
-                comments = [c for c in comments if c.get("create_time", 0) >= threshold_ts]
+                now_ts_ms = utils.get_current_timestamp()
+                threshold_ts_ms = now_ts_ms - (config.COMMENT_TIME_FILTER_H * 3600 * 1000)
+                comments = [c for c in comments if c.get("create_time", 0) >= threshold_ts_ms]
                 if not comments:
                     # If this page has no new comments, we keep flipping to find potentially newer ones
+                    # Note: Pagination in XHS comments can be tricky, but usually they are sorted by time.
                     continue
 
             if len(result) + len(comments) > max_count:
