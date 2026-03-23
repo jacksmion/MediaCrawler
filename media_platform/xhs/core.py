@@ -236,6 +236,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
         note_details = await asyncio.gather(*task_list)
         for note_detail in note_details:
             if note_detail:
+                # Filter by keyword if provided
+                if config.KEYWORDS:
+                    content = (note_detail.get("title") or "") + (note_detail.get("desc") or "")
+                    if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                        utils.logger.info(f"[XiaoHongShuCrawler.fetch_creator_notes_detail] Skip note {note_detail.get('note_id')} due to keyword mismatch")
+                        continue
+
                 await xhs_store.update_xhs_note(note_detail)
                 await self.get_notice_media(note_detail)
 
@@ -261,6 +268,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
         note_details = await asyncio.gather(*get_note_detail_task_list)
         for note_detail in note_details:
             if note_detail:
+                # Filter by keyword if provided
+                if config.KEYWORDS:
+                    content = (note_detail.get("title") or "") + (note_detail.get("desc") or "")
+                    if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                        utils.logger.info(f"[XiaoHongShuCrawler.get_specified_notes] Skip note {note_detail.get('note_id')} due to keyword mismatch")
+                        continue
+
                 need_get_comment_note_ids.append(note_detail.get("note_id", ""))
                 xsec_tokens.append(note_detail.get("xsec_token", ""))
                 await xhs_store.update_xhs_note(note_detail)

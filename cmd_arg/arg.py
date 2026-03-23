@@ -300,6 +300,22 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
                 rich_help_panel="Proxy Configuration",
             ),
         ] = config.IP_PROXY_PROVIDER_NAME,
+        sort: Annotated[
+            str,
+            typer.Option(
+                "--sort",
+                help="Search result sorting (Note: Platform specific)",
+                rich_help_panel="Basic Configuration",
+            ),
+        ] = config.SORT_TYPE,
+        comment_time_filter_h: Annotated[
+            int,
+            typer.Option(
+                "--comment_time_filter_h",
+                help="Crawler comment time range (hours), 0 represents no limit",
+                rich_help_panel="Comment Configuration",
+            ),
+        ] = config.COMMENT_TIME_FILTER_H,
     ) -> SimpleNamespace:
         """MediaCrawler 命令行入口"""
 
@@ -331,6 +347,13 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
         config.ENABLE_IP_PROXY = enable_ip_proxy_value
         config.IP_PROXY_POOL_COUNT = ip_proxy_pool_count
         config.IP_PROXY_PROVIDER_NAME = ip_proxy_provider_name
+        config.SORT_TYPE = sort
+        if platform == PlatformEnum.DOUYIN:
+             try:
+                 config.SEARCH_SORT_TYPE = int(sort)
+             except ValueError:
+                 config.SEARCH_SORT_TYPE = 0
+        config.COMMENT_TIME_FILTER_H = comment_time_filter_h
 
         # Set platform-specific ID lists for detail/creator mode
         if specified_id_list:

@@ -29,12 +29,24 @@ export default function TaskPanel() {
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [headless, setHeadless] = useState(false);
+  const [sortType, setSortType] = useState('general');
+  const [commentTime, setCommentTime] = useState(0);
+  const [filterKeywords, setFilterKeywords] = useState('');
   
   const logEndRef = useRef(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  useEffect(() => {
+    // Sync default sort type when platform changes
+    if (selectedPlatform.id === 'dy') {
+      setSortType('0');
+    } else {
+      setSortType('general');
+    }
+  }, [selectedPlatform]);
 
   useEffect(() => {
     const wsUrl = `ws://${window.location.hostname}:8080/api/ws/logs`;
@@ -68,13 +80,14 @@ export default function TaskPanel() {
         save_option: 'jsonl',
         start_page: 1,
         enable_comments: true,
-        enable_sub_comments: false
+        enable_sub_comments: false,
+        sort_type: sortType,
+        comment_time_filter_h: parseInt(commentTime) || 0,
+        keywords: selectedMode.id === 'search' ? keywords : filterKeywords
       };
 
       // Map input value to correct backend field
-      if (selectedMode.id === 'search') {
-        payload.keywords = keywords;
-      } else if (selectedMode.id === 'creator') {
+      if (selectedMode.id === 'creator') {
         payload.creator_ids = keywords;
       } else if (selectedMode.id === 'detail') {
         payload.specified_ids = keywords;
@@ -159,20 +172,78 @@ export default function TaskPanel() {
       </div>
 
       <div className="flex items-center justify-between p-4 bg-slate-900/40 rounded-2xl border border-slate-800/50">
-        <div className="flex items-center space-x-3">
-          <Switch checked={headless} onChange={setHeadless} className={`${headless ? 'bg-blue-600' : 'bg-slate-700'} relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}>
-            <span className={`${headless ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
-          </Switch>
-          <span className="text-sm font-medium">无头浏览器模式</span>
-        </div>
-        
-        <div className="flex space-x-3">
-          <button 
-            onClick={isRunning ? handleStop : handleStart}
-            className={`px-8 py-3 rounded-xl font-bold flex items-center space-x-2 transition-all active:scale-95 shadow-lg ${isRunning ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/40' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'}`}
-          >
-            {isRunning ? <><StopIcon className="w-5 h-5" /><span>停止任务</span></> : <><PlayIcon className="w-5 h-5" /><span>开始任务</span></>}
-          </button>
+        <div className="flex flex-col space-y-4 w-full">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Switch checked={headless} onChange={setHeadless} className={`${headless ? 'bg-blue-600' : 'bg-slate-700'} relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}>
+                <span className={`${headless ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
+              </Switch>
+              <span className="text-sm font-medium">无头浏览器模式</span>
+            </div>
+
+            <div className="flex space-x-3">
+              <button 
+                onClick={isRunning ? handleStop : handleStart}
+                className={`px-8 py-3 rounded-xl font-bold flex items-center space-x-2 transition-all active:scale-95 shadow-lg ${isRunning ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/40' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'}`}
+              >
+                {isRunning ? <><StopIcon className="w-5 h-5" /><span>停止任务</span></> : <><PlayIcon className="w-5 h-5" /><span>开始任务</span></>}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-800/50">
+            {selectedMode.id === 'search' && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">搜索排序规则</label>
+                <select 
+                  value={sortType} 
+                  onChange={(e) => setSortType(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                >
+                  {selectedPlatform.id === 'xhs' ? (
+                    <>
+                      <option value="general">综合排序</option>
+                      <option value="popularity_descending">最热优先</option>
+                      <option value="time_descending">最新优先</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="0">综合排序</option>
+                      <option value="1">点赞最多</option>
+                      <option value="2">最新发布</option>
+                    </>
+                  )}
+                </select>
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">评论时间限制 (小时)</label>
+              <div className="flex items-center space-x-2">
+                <input 
+                  type="number" 
+                  min="0"
+                  value={commentTime}
+                  onChange={(e) => setCommentTime(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+                <span className="text-[10px] text-slate-500 whitespace-nowrap">0表示不限</span>
+              </div>
+            </div>
+
+            {selectedMode.id !== 'search' && (
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500">内容关键词过滤 (可选)</label>
+                <input 
+                  type="text" 
+                  placeholder="仅采集标题或正文包含此关键字的作品，多个用英文逗号分隔"
+                  value={filterKeywords}
+                  onChange={(e) => setFilterKeywords(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

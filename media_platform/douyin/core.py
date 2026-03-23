@@ -201,7 +201,14 @@ class DouYinCrawler(AbstractCrawler):
         task_list = [self.get_aweme_detail(aweme_id=aweme_id, semaphore=semaphore) for aweme_id in aweme_id_list]
         aweme_details = await asyncio.gather(*task_list)
         for aweme_detail in aweme_details:
-            if aweme_detail is not None:
+            if aweme_detail:
+                # Filter by keyword if provided
+                if config.KEYWORDS:
+                    content = (aweme_detail.get("desc") or "")
+                    if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                        utils.logger.info(f"[DouYinCrawler.get_specified_awemes] Skip aweme {aweme_detail.get('aweme_id')} due to keyword mismatch")
+                        continue
+
                 await douyin_store.update_douyin_aweme(aweme_item=aweme_detail)
                 await self.get_aweme_media(aweme_item=aweme_detail)
         await self.batch_get_note_comments(aweme_id_list)
@@ -293,7 +300,14 @@ class DouYinCrawler(AbstractCrawler):
 
         note_details = await asyncio.gather(*task_list)
         for aweme_item in note_details:
-            if aweme_item is not None:
+            if aweme_item:
+                # Filter by keyword if provided
+                if config.KEYWORDS:
+                    content = (aweme_item.get("desc") or "")
+                    if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                        utils.logger.info(f"[DouYinCrawler.fetch_creator_video_detail] Skip aweme {aweme_item.get('aweme_id')} due to keyword mismatch")
+                        continue
+
                 await douyin_store.update_douyin_aweme(aweme_item=aweme_item)
                 await self.get_aweme_media(aweme_item=aweme_item)
 

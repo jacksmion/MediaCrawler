@@ -420,6 +420,16 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 )
                 break
             comments = comments_res["comments"]
+            
+            # Filter comments by time if needed
+            if config.COMMENT_TIME_FILTER_H > 0:
+                now_ts = utils.get_current_timestamp() / 1000
+                threshold_ts = now_ts - (config.COMMENT_TIME_FILTER_H * 3600)
+                comments = [c for c in comments if c.get("create_time", 0) >= threshold_ts]
+                if not comments:
+                    # If this page has no new comments, we keep flipping to find potentially newer ones
+                    continue
+
             if len(result) + len(comments) > max_count:
                 comments = comments[: max_count - len(result)]
             if callback:

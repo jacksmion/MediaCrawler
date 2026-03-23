@@ -227,6 +227,12 @@ class CrawlerManager:
 
         if config.cookies:
             cmd.extend(["--cookies", config.cookies])
+        
+        if config.sort_type:
+            cmd.extend(["--sort", config.sort_type])
+            
+        if config.comment_time_filter_h > 0:
+            cmd.extend(["--comment_time_filter_h", str(config.comment_time_filter_h)])
 
         cmd.extend(["--headless", "true" if config.headless else "false"])
 

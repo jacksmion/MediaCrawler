@@ -71,6 +71,8 @@ class CrawlerStartRequest(BaseModel):
     save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
     cookies: str = ""
     headless: bool = False
+    sort_type: str = ""  # Sort mode for search (search mode)
+    comment_time_filter_h: int = 0  # Max age of comments to crawl in hours (0 = unlimited)
 
 
 class CrawlerStatusResponse(BaseModel):
