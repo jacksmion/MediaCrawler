@@ -43,9 +43,11 @@ def get_file_info(file_path: Path) -> dict:
                 data = json.load(f)
                 if isinstance(data, list):
                     record_count = len(data)
-        elif file_path.suffix == ".csv":
+        elif file_path.suffix in (".csv", ".jsonl"):
             with open(file_path, "r", encoding="utf-8") as f:
-                record_count = sum(1 for _ in f) - 1  # Subtract header row
+                record_count = sum(1 for _ in f)
+                if file_path.suffix == ".csv":
+                    record_count -= 1  # Subtract header row
     except Exception:
         pass
 
@@ -66,7 +68,7 @@ async def list_data_files(platform: Optional[str] = None, file_type: Optional[st
         return {"files": []}
 
     files = []
-    supported_extensions = {".json", ".csv", ".xlsx", ".xls"}
+    supported_extensions = {".json", ".jsonl", ".csv", ".xlsx", ".xls"}
 
     for root, dirs, filenames in os.walk(DATA_DIR):
         root_path = Path(root)
@@ -149,6 +151,20 @@ async def get_file_content(file_path: str, preview: bool = True, limit: int = 10
                     "total": total,
                     "columns": list(df.columns)
                 }
+            elif full_path.suffix == ".jsonl":
+                with open(full_path, "r", encoding="utf-8") as f:
+                    rows = []
+                    for i, line in enumerate(f):
+                        if i >= limit:
+                            break
+                        try:
+                            rows.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+                    # Re-read to get total count
+                    f.seek(0)
+                    total = sum(1 for _ in f)
+                    return {"data": rows, "total": total}
             else:
                 raise HTTPException(status_code=400, detail="Unsupported file type for preview")
         except json.JSONDecodeError:
