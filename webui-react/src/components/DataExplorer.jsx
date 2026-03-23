@@ -16,6 +16,14 @@ export default function DataExplorer() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [previewContent, setPreviewContent] = useState(null);
+  const [previewType, setPreviewType] = useState('contents'); // contents or comments
+  
+  const formatDate = (ts) => {
+    if (!ts) return '-';
+    // Handle both seconds and milliseconds
+    const date = ts > 10000000000 ? new Date(ts) : new Date(ts * 1000);
+    return date.toLocaleString();
+  };
 
   const fetchFiles = async () => {
     try {
@@ -35,8 +43,11 @@ export default function DataExplorer() {
 
   const handlePreview = async (path) => {
     try {
+      // Determine type from filename
+      setPreviewType(path.includes('comments') ? 'comments' : 'contents');
       const res = await fetch(`http://${window.location.hostname}:8080/api/data/files/${encodeURIComponent(path)}?preview=true`);
       const data = await res.json();
+      setFiles(prev => prev.map(f => f.path === path ? { ...f, previewed: true } : f));
       setPreviewContent(data.data || []);
     } catch (err) {
       console.error(err);
@@ -119,13 +130,90 @@ export default function DataExplorer() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-black/60 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700 w-full max-w-6xl max-h-[80vh] rounded-3xl flex flex-col shadow-2xl overflow-hidden">
             <div className="p-4 border-b border-slate-800 flex justify-between items-center px-8">
-              <h3 className="font-bold">数据预览 (最近 10 条)</h3>
-              <button onClick={() => setPreviewContent(null)} className="text-slate-500 hover:text-white">✕</button>
+              <div className="flex items-center space-x-4">
+                <h3 className="font-bold">数据预览</h3>
+                <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700 uppercase tracking-tighter font-bold">
+                  {previewType === 'comments' ? '评论数据' : '笔记/视频内容'}
+                </span>
+              </div>
+              <button onClick={() => setPreviewContent(null)} className="text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded-lg transition-colors">✕</button>
             </div>
-            <div className="flex-1 overflow-auto p-4 bg-slate-950 font-mono text-xs">
-              <pre className="text-blue-400">
-                {JSON.stringify(previewContent, null, 2)}
-              </pre>
+            <div className="flex-1 overflow-auto bg-slate-950">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="sticky top-0 bg-slate-900 border-b border-slate-800 z-10 text-slate-500 font-bold uppercase tracking-wider">
+                  <tr>
+                    {previewType === 'comments' ? (
+                      <>
+                        <th className="px-6 py-3 w-48">博主信息</th>
+                        <th className="px-6 py-3">评论内容</th>
+                        <th className="px-6 py-3 w-24">获赞</th>
+                        <th className="px-6 py-3 w-48">时间</th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="px-6 py-3 w-48">作者信息</th>
+                        <th className="px-6 py-3">内容概要</th>
+                        <th className="px-6 py-3 w-32">互动数据</th>
+                        <th className="px-6 py-3 w-48">发布时间</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {previewContent.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
+                      {previewType === 'comments' ? (
+                        <>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center space-x-2">
+                              {item.avatar && <img src={item.avatar} className="w-8 h-8 rounded-full border border-slate-700 shadow-sm" alt="" />}
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-300 truncate max-w-[120px]">{item.nickname || 'Unknown'}</span>
+                                <span className="text-[9px] text-slate-500 font-mono">UID: {item.user_id}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-slate-200 line-clamp-3 leading-relaxed">{item.content}</p>
+                            {item.ip_location && <span className="text-[10px] text-slate-500 mt-1 block">📍 {item.ip_location}</span>}
+                          </td>
+                          <td className="px-6 py-4 text-emerald-500 font-mono font-bold">{item.like_count || 0}</td>
+                          <td className="px-6 py-4 text-slate-500 whitespace-nowrap">{formatDate(item.create_time)}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center space-x-2">
+                              {item.avatar && <img src={item.avatar} className="w-8 h-8 rounded-full border border-slate-700 shadow-sm" alt="" />}
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-300 truncate max-w-[100px]">{item.nickname || 'Unknown'}</span>
+                                <span className="text-[9px] text-slate-500">ID: {item.user_id}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="space-y-1">
+                              {item.title && <h4 className="font-bold text-slate-200 line-clamp-1">{item.title}</h4>}
+                              <p className="text-slate-400 line-clamp-2 leading-tight">{item.desc}</p>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="grid grid-cols-1 gap-1 text-[10px] text-slate-400">
+                              <span className="flex justify-between"><span>👍</span> {item.liked_count || 0}</span>
+                              <span className="flex justify-between"><span>💬</span> {item.comment_count || 0}</span>
+                              {item.share_count && <span className="flex justify-between"><span>🔗</span> {item.share_count}</span>}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-slate-500 whitespace-nowrap">{formatDate(item.time)}</td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-3 bg-slate-900 border-t border-slate-800 text-[10px] text-center text-slate-500 italic">
+              * 目前仅展示最近采集的前 10 条数据进行预览，完整内容请下载文件查看
             </div>
           </div>
         </div>
