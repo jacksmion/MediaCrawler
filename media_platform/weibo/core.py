@@ -24,9 +24,10 @@
 
 import asyncio
 import os
+import uuid
 # import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
 from asyncio import Task
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from playwright.async_api import (
     BrowserContext,
@@ -41,7 +42,7 @@ from application.services.crawl_state_service import CrawlStateService
 from application.services.event_service import EventService
 from application.services.normalized_content_service import NormalizedContentService
 from application.services.raw_record_service import RawRecordService
-from application.services.weibo_platform_runner import WeiboPlatformRunner
+from application.services.weibo_task_executor import WeiboTaskExecutor
 from base.base_crawler import AbstractCrawler
 from connectors.weibo.errors import WeiboDataFetchError
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
@@ -55,6 +56,8 @@ from .exception import DataFetchError
 from .field import SearchType
 from .help import filter_search_result_card
 from .login import WeiboLogin
+from schemas.tasks.models import CrawlTask
+from schemas.tasks.requirements import WeiboCrawlRequirement
 
 
 class WeiboCrawler(AbstractCrawler):
@@ -75,7 +78,7 @@ class WeiboCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = WeiboPlatformRunner(
+        self.task_executor = WeiboTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
@@ -101,60 +104,23 @@ class WeiboCrawler(AbstractCrawler):
         }
         return bool(toggle_map.get(capability, False))
 
-    async def start(self):
-        playwright_proxy_format, httpx_proxy_format = None, None
-        if config.ENABLE_IP_PROXY:
-            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
-            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
-            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
-        self._platform_http_proxy = httpx_proxy_format
+    async def execute_platform_task(self, task: CrawlTask) -> dict[str, Any]:
+        """Execute a persisted Weibo crawl task through the platform task executor."""
+        return await self.task_executor.execute(task)
 
+    async def execute_platform_requirement(self, requirement: WeiboCrawlRequirement) -> dict[str, Any]:
+        """Execute a requirement-driven Weibo crawl plan through the platform task executor."""
+        return await self.task_executor.execute_requirement(requirement)
+
+    async def start_with_requirement(self, requirement: WeiboCrawlRequirement) -> dict[str, Any]:
+        """Boot runtime resources and execute a requirement-driven Weibo crawl."""
         async with async_playwright() as playwright:
-            # Select launch mode based on configuration
-            if config.ENABLE_CDP_MODE:
-                utils.logger.info("[WeiboCrawler] Launching browser with CDP mode")
-                self.browser_context = await self.launch_browser_with_cdp(
-                    playwright,
-                    playwright_proxy_format,
-                    self.mobile_user_agent,
-                    headless=config.CDP_HEADLESS,
-                )
-            else:
-                utils.logger.info("[WeiboCrawler] Launching browser with standard mode")
-                # Launch a browser context.
-                chromium = playwright.chromium
-                self.browser_context = await self.launch_browser(chromium, None, self.mobile_user_agent, headless=config.HEADLESS)
+            await self._initialize_runtime(playwright)
+            return await self.execute_platform_requirement(requirement)
 
-                # stealth.min.js is a js script to prevent the website from detecting the crawler.
-                await self.browser_context.add_init_script(path="libs/stealth.min.js")
-
-
-            self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
-            await asyncio.sleep(2)
-
-
-            # Create a client to interact with the xiaohongshu website.
-            self.wb_client = await self.create_weibo_client(httpx_proxy_format)
-            if not await self.wb_client.pong():
-                login_obj = WeiboLogin(
-                    login_type=config.LOGIN_TYPE,
-                    login_phone="",  # your phone number
-                    browser_context=self.browser_context,
-                    context_page=self.context_page,
-                    cookie_str=config.COOKIES,
-                )
-                await login_obj.begin()
-
-                # After successful login, redirect to mobile website and update mobile cookies
-                utils.logger.info("[WeiboCrawler.start] redirect weibo mobile homepage and update cookies on mobile platform")
-                await self.context_page.goto(self.mobile_index_url)
-                await asyncio.sleep(3)
-                # Only get mobile cookies to avoid confusion between PC and mobile cookies
-                await self.wb_client.update_cookies(
-                    browser_context=self.browser_context,
-                    urls=[self.mobile_index_url]
-                )
+    async def start(self):
+        async with async_playwright() as playwright:
+            await self._initialize_runtime(playwright)
 
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
@@ -169,6 +135,51 @@ class WeiboCrawler(AbstractCrawler):
             else:
                 pass
             utils.logger.info("[WeiboCrawler.start] Weibo Crawler finished ...")
+
+    async def _initialize_runtime(self, playwright: Playwright) -> None:
+        """Prepare proxy, browser, page, client, and login state for Weibo crawling."""
+        playwright_proxy_format, httpx_proxy_format = None, None
+        if config.ENABLE_IP_PROXY:
+            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
+            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
+            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
+
+        if config.ENABLE_CDP_MODE:
+            utils.logger.info("[WeiboCrawler] Launching browser with CDP mode")
+            self.browser_context = await self.launch_browser_with_cdp(
+                playwright,
+                playwright_proxy_format,
+                self.mobile_user_agent,
+                headless=config.CDP_HEADLESS,
+            )
+        else:
+            utils.logger.info("[WeiboCrawler] Launching browser with standard mode")
+            chromium = playwright.chromium
+            self.browser_context = await self.launch_browser(chromium, None, self.mobile_user_agent, headless=config.HEADLESS)
+            await self.browser_context.add_init_script(path="libs/stealth.min.js")
+
+        self.context_page = await self.browser_context.new_page()
+        await self.context_page.goto(self.index_url)
+        await asyncio.sleep(2)
+
+        self.wb_client = await self.create_weibo_client(httpx_proxy_format)
+        if not await self.wb_client.pong():
+            login_obj = WeiboLogin(
+                login_type=config.LOGIN_TYPE,
+                login_phone="",
+                browser_context=self.browser_context,
+                context_page=self.context_page,
+                cookie_str=config.COOKIES,
+            )
+            await login_obj.begin()
+            utils.logger.info("[WeiboCrawler.start] redirect weibo mobile homepage and update cookies on mobile platform")
+            await self.context_page.goto(self.mobile_index_url)
+            await asyncio.sleep(3)
+            await self.wb_client.update_cookies(
+                browser_context=self.browser_context,
+                urls=[self.mobile_index_url]
+            )
 
     async def search(self):
         """
@@ -252,10 +263,11 @@ class WeiboCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    result = await self.platform_runner.run_search_page(
-                        keyword=keyword,
-                        page=page,
-                        search_type=search_type.value,
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={"keyword": keyword, "page": page, "search_type": search_type.value},
+                        )
                     )
                 except WeiboDataFetchError as exc:
                     utils.logger.error(
@@ -322,7 +334,9 @@ class WeiboCrawler(AbstractCrawler):
     async def get_note_info_with_platform_runner(self, note_id: str) -> Optional[Dict]:
         """Get note detail through the new platform runner."""
         try:
-            result = await self.platform_runner.run_detail(note_id=note_id)
+            result = await self.execute_platform_task(
+                self._new_platform_task(task_type="detail", params={"note_id": note_id})
+            )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
                 f"[WeiboCrawler.get_note_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
@@ -387,9 +401,11 @@ class WeiboCrawler(AbstractCrawler):
             utils.logger.info(
                 f"[WeiboCrawler.get_note_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_id}"
             )
-            result = await self.platform_runner.run_comments(
-                note_id=note_id,
-                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="comments",
+                    params={"note_id": note_id, "limit": config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES},
+                )
             )
             comments = result.get("comments", [])
             if comments:
@@ -472,7 +488,9 @@ class WeiboCrawler(AbstractCrawler):
         utils.logger.info("[WeiboCrawler.get_creators_and_notes_with_platform_runner] Begin get weibo creators")
         for user_id in config.WEIBO_CREATOR_ID_LIST:
             try:
-                creator_result = await self.platform_runner.run_creator(creator_id=user_id)
+                creator_result = await self.execute_platform_task(
+                    self._new_platform_task(task_type="creator", params={"creator_id": user_id})
+                )
             except WeiboDataFetchError as exc:
                 utils.logger.error(
                     f"[WeiboCrawler.get_creators_and_notes_with_platform_runner] get creator info error, creator_id:{user_id}, err:{exc}"
@@ -485,9 +503,11 @@ class WeiboCrawler(AbstractCrawler):
             all_notes: List[Dict] = []
             while True:
                 try:
-                    contents_result = await self.platform_runner.run_creator_contents(
-                        creator_id=user_id,
-                        cursor=cursor,
+                    contents_result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="creator_contents",
+                            params={"creator_id": user_id, "cursor": cursor},
+                        )
                     )
                 except WeiboDataFetchError as exc:
                     utils.logger.error(
@@ -651,3 +671,11 @@ class WeiboCrawler(AbstractCrawler):
         else:
             await self.browser_context.close()
         utils.logger.info("[WeiboCrawler.close] Browser context closed ...")
+    def _new_platform_task(self, *, task_type: str, params: Dict[str, Any]) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"wb-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="weibo",
+            task_type=task_type,
+            status="planned",
+            params=params,
+        )

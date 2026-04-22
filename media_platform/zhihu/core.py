@@ -21,9 +21,10 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os
+import uuid
 # import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
 from asyncio import Task
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from playwright.async_api import (
     BrowserContext,
@@ -38,7 +39,7 @@ from application.services.crawl_state_service import CrawlStateService
 from application.services.event_service import EventService
 from application.services.normalized_content_service import NormalizedContentService
 from application.services.raw_record_service import RawRecordService
-from application.services.zhihu_platform_runner import ZhihuPlatformRunner
+from application.services.zhihu_task_executor import ZhihuTaskExecutor
 from constant import zhihu as constant
 from base.base_crawler import AbstractCrawler
 from model.m_zhihu import ZhihuComment, ZhihuContent, ZhihuCreator
@@ -53,6 +54,8 @@ from .exception import DataFetchError
 from connectors.zhihu.errors import ZhihuDataFetchError
 from .help import ZhihuExtractor, judge_zhihu_url
 from .login import ZhiHuLogin
+from schemas.tasks.models import CrawlTask
+from schemas.tasks.requirements import ZhihuCrawlRequirement
 
 
 class ZhihuCrawler(AbstractCrawler):
@@ -73,7 +76,7 @@ class ZhihuCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = ZhihuPlatformRunner(
+        self.task_executor = ZhihuTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
@@ -99,70 +102,28 @@ class ZhihuCrawler(AbstractCrawler):
         }
         return bool(toggle_map.get(capability, False))
 
+    async def execute_platform_task(self, task: CrawlTask) -> dict[str, Any]:
+        """Execute a persisted Zhihu crawl task through the platform task executor."""
+        return await self.task_executor.execute(task)
+
+    async def execute_platform_requirement(self, requirement: ZhihuCrawlRequirement) -> dict[str, Any]:
+        """Execute a requirement-driven Zhihu crawl plan through the platform task executor."""
+        return await self.task_executor.execute_requirement(requirement)
+
+    async def start_with_requirement(self, requirement: ZhihuCrawlRequirement) -> dict[str, Any]:
+        """Boot runtime resources and execute a requirement-driven Zhihu crawl."""
+        async with async_playwright() as playwright:
+            await self._initialize_runtime(playwright)
+            return await self.execute_platform_requirement(requirement)
+
     async def start(self) -> None:
         """
         Start the crawler
         Returns:
 
         """
-        playwright_proxy_format, httpx_proxy_format = None, None
-        if config.ENABLE_IP_PROXY:
-            self.ip_proxy_pool = await create_ip_pool(
-                config.IP_PROXY_POOL_COUNT, enable_validate_ip=True
-            )
-            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
-            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(
-                ip_proxy_info
-            )
-        self._platform_http_proxy = httpx_proxy_format
-
         async with async_playwright() as playwright:
-            # Choose launch mode based on configuration
-            if config.ENABLE_CDP_MODE:
-                utils.logger.info("[ZhihuCrawler] Launching browser in CDP mode")
-                self.browser_context = await self.launch_browser_with_cdp(
-                    playwright,
-                    playwright_proxy_format,
-                    self.user_agent,
-                    headless=config.CDP_HEADLESS,
-                )
-            else:
-                utils.logger.info("[ZhihuCrawler] Launching browser in standard mode")
-                # Launch a browser context.
-                chromium = playwright.chromium
-                self.browser_context = await self.launch_browser(
-                    chromium, None, self.user_agent, headless=config.HEADLESS
-                )
-                # stealth.min.js is a js script to prevent the website from detecting the crawler.
-                await self.browser_context.add_init_script(path="libs/stealth.min.js")
-
-            self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url, wait_until="domcontentloaded")
-
-            # Create a client to interact with the zhihu website.
-            self.zhihu_client = await self.create_zhihu_client(httpx_proxy_format)
-            if not await self.zhihu_client.pong():
-                login_obj = ZhiHuLogin(
-                    login_type=config.LOGIN_TYPE,
-                    login_phone="",  # input your phone number
-                    browser_context=self.browser_context,
-                    context_page=self.context_page,
-                    cookie_str=config.COOKIES,
-                )
-                await login_obj.begin()
-                await self.zhihu_client.update_cookies(
-                    browser_context=self.browser_context
-                )
-
-            # Zhihu's search API requires opening the search page first to access cookies, homepage alone won't work
-            utils.logger.info(
-                "[ZhihuCrawler.start] Zhihu navigating to search page to get search page cookies, this process takes about 5 seconds"
-            )
-            await self.context_page.goto(
-                f"{self.index_url}/search?q=python&search_source=Guess&utm_content=search_hot&type=content"
-            )
-            await asyncio.sleep(5)
-            await self.zhihu_client.update_cookies(browser_context=self.browser_context)
+            await self._initialize_runtime(playwright)
 
             crawler_type_var.set(config.CRAWLER_TYPE)
             if config.CRAWLER_TYPE == "search":
@@ -178,6 +139,57 @@ class ZhihuCrawler(AbstractCrawler):
                 pass
 
             utils.logger.info("[ZhihuCrawler.start] Zhihu Crawler finished ...")
+
+    async def _initialize_runtime(self, playwright: Playwright) -> None:
+        """Prepare proxy, browser, page, client, and login state for Zhihu crawling."""
+        playwright_proxy_format, httpx_proxy_format = None, None
+        if config.ENABLE_IP_PROXY:
+            self.ip_proxy_pool = await create_ip_pool(
+                config.IP_PROXY_POOL_COUNT, enable_validate_ip=True
+            )
+            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
+            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
+
+        if config.ENABLE_CDP_MODE:
+            utils.logger.info("[ZhihuCrawler] Launching browser in CDP mode")
+            self.browser_context = await self.launch_browser_with_cdp(
+                playwright,
+                playwright_proxy_format,
+                self.user_agent,
+                headless=config.CDP_HEADLESS,
+            )
+        else:
+            utils.logger.info("[ZhihuCrawler] Launching browser in standard mode")
+            chromium = playwright.chromium
+            self.browser_context = await self.launch_browser(
+                chromium, None, self.user_agent, headless=config.HEADLESS
+            )
+            await self.browser_context.add_init_script(path="libs/stealth.min.js")
+
+        self.context_page = await self.browser_context.new_page()
+        await self.context_page.goto(self.index_url, wait_until="domcontentloaded")
+
+        self.zhihu_client = await self.create_zhihu_client(httpx_proxy_format)
+        if not await self.zhihu_client.pong():
+            login_obj = ZhiHuLogin(
+                login_type=config.LOGIN_TYPE,
+                login_phone="",
+                browser_context=self.browser_context,
+                context_page=self.context_page,
+                cookie_str=config.COOKIES,
+            )
+            await login_obj.begin()
+            await self.zhihu_client.update_cookies(browser_context=self.browser_context)
+
+        utils.logger.info(
+            "[ZhihuCrawler.start] Zhihu navigating to search page to get search page cookies, this process takes about 5 seconds"
+        )
+        await self.context_page.goto(
+            f"{self.index_url}/search?q=python&search_source=Guess&utm_content=search_hot&type=content"
+        )
+        await asyncio.sleep(5)
+        await self.zhihu_client.update_cookies(browser_context=self.browser_context)
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
@@ -250,7 +262,12 @@ class ZhihuCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    result = await self.platform_runner.run_search_page(keyword=keyword, page=page, page_size=zhihu_limit_count)
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={"keyword": keyword, "page": page, "page_size": zhihu_limit_count},
+                        )
+                    )
                 except ZhihuDataFetchError as exc:
                     utils.logger.error(
                         f"[ZhihuCrawler.search_with_platform_connector] Search content error, keyword: {keyword}, page: {page}, err: {exc}"
@@ -335,9 +352,11 @@ class ZhihuCrawler(AbstractCrawler):
             utils.logger.info(
                 f"[ZhihuCrawler.get_comments_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for content {content_item.content_id}"
             )
-            result = await self.platform_runner.run_comments(
-                content=content_item,
-                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="comments",
+                    params={"content": content_item.model_dump(), "limit": config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES},
+                )
             )
             comments = result.get("comments", [])
             if comments:
@@ -416,7 +435,9 @@ class ZhihuCrawler(AbstractCrawler):
             )
             user_url_token = user_link.split("/")[-1]
             try:
-                creator_result = await self.platform_runner.run_creator(creator_id=user_url_token)
+                creator_result = await self.execute_platform_task(
+                    self._new_platform_task(task_type="creator", params={"creator_url": user_link})
+                )
             except ZhihuDataFetchError as exc:
                 utils.logger.error(
                     f"[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Creator {user_url_token} fetch failed: {exc}"
@@ -435,9 +456,11 @@ class ZhihuCrawler(AbstractCrawler):
             all_content_list: List[ZhihuContent] = []
             while True:
                 try:
-                    contents_result = await self.platform_runner.run_creator_contents(
-                        creator_id=user_url_token,
-                        cursor=next_cursor,
+                    contents_result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="creator_contents",
+                            params={"creator_url": user_link, "cursor": next_cursor},
+                        )
                     )
                 except ZhihuDataFetchError as exc:
                     utils.logger.error(
@@ -529,11 +552,8 @@ class ZhihuCrawler(AbstractCrawler):
                 content_id = full_note_url.split("/")[-1]
             else:
                 content_id = full_note_url.split("/")[-1]
-            result = await self.platform_runner.run_detail(
-                content_id=content_id,
-                content_type=note_type,
-                detail_url=full_note_url,
-                question_id=question_id,
+            result = await self.execute_platform_task(
+                self._new_platform_task(task_type="detail", params={"note_url": full_note_url})
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
@@ -681,3 +701,11 @@ class ZhihuCrawler(AbstractCrawler):
         else:
             await self.browser_context.close()
         utils.logger.info("[ZhihuCrawler.close] Browser context closed ...")
+    def _new_platform_task(self, *, task_type: str, params: Dict[str, Any]) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"zh-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="zhihu",
+            task_type=task_type,
+            status="planned",
+            params=params,
+        )

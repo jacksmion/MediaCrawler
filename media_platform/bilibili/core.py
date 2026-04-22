@@ -24,6 +24,7 @@
 
 import asyncio
 import os
+import uuid
 # import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple, Union
@@ -40,7 +41,7 @@ from playwright.async_api import (
 from playwright._impl._errors import TargetClosedError
 
 import config
-from application.services.bilibili_platform_runner import BilibiliPlatformRunner
+from application.services.bilibili_task_executor import BilibiliTaskExecutor
 from application.services.crawl_state_service import CrawlStateService
 from application.services.event_service import EventService
 from application.services.normalized_content_service import NormalizedContentService
@@ -58,6 +59,7 @@ from .exception import DataFetchError
 from .field import SearchOrderType
 from .help import parse_video_info_from_url, parse_creator_info_from_url
 from .login import BilibiliLogin
+from schemas.tasks.models import CrawlTask
 
 
 class BilibiliCrawler(AbstractCrawler):
@@ -76,12 +78,24 @@ class BilibiliCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = BilibiliPlatformRunner(
+        self.task_executor = BilibiliTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
             normalized_content_service=self.normalized_content_service,
             raw_record_service=self.raw_record_service,
+        )
+
+    async def execute_platform_task(self, task: CrawlTask) -> dict:
+        return await self.task_executor.execute(task)
+
+    def _new_platform_task(self, *, task_type: str, params: Dict) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"bili-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="bilibili",
+            task_type=task_type,
+            status="planned",
+            params=params,
         )
 
     @staticmethod
@@ -200,7 +214,12 @@ class BilibiliCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    search_result = await self.platform_runner.run_search_page(keyword=keyword, page=page, page_size=bili_limit_count)
+                    search_result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={"keyword": keyword, "page": page, "page_size": bili_limit_count},
+                        )
+                    )
                 except BilibiliDataFetchError as exc:
                     utils.logger.error(
                         f"[BilibiliCrawler.search_with_platform_connector] search bilibili keyword: {keyword}, page: {page} failed, err: {exc}"
@@ -462,9 +481,11 @@ class BilibiliCrawler(AbstractCrawler):
             utils.logger.info(
                 f"[BilibiliCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for video {video_id}"
             )
-            result = await self.platform_runner.run_comments(
-                content_id=video_id,
-                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="comments",
+                    params={"content_id": video_id, "limit": config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES},
+                )
             )
             comments = result.get("comments", [])
             if comments:
@@ -498,10 +519,11 @@ class BilibiliCrawler(AbstractCrawler):
         ps = 30
         while True:
             try:
-                result = await self.platform_runner.run_creator_contents(
-                    creator_id=str(creator_id),
-                    cursor=str(pn),
-                    limit=ps,
+                result = await self.execute_platform_task(
+                    self._new_platform_task(
+                        task_type="creator_contents",
+                        params={"creator_id": str(creator_id), "cursor": str(pn), "limit": ps},
+                    )
                 )
             except BilibiliDataFetchError as exc:
                 utils.logger.error(f"[BilibiliCrawler.get_creator_videos_with_platform_runner] Failed to fetch creator videos: {exc}")
@@ -591,7 +613,9 @@ class BilibiliCrawler(AbstractCrawler):
         """Get bilibili video detail through the new platform runner."""
         try:
             content_id = str(aid or 0)
-            result = await self.platform_runner.run_detail(content_id=content_id, bvid=bvid)
+            result = await self.execute_platform_task(
+                self._new_platform_task(task_type="detail", params={"content_id": content_id, "bvid": bvid})
+            )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
                 f"[BilibiliCrawler.get_video_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {bvid or aid}"

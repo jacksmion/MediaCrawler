@@ -20,8 +20,9 @@
 import asyncio
 import os
 import random
+import uuid
 from asyncio import Task
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from playwright.async_api import (
     BrowserContext,
@@ -37,7 +38,7 @@ from application.services.crawl_state_service import CrawlStateService
 from application.services.event_service import EventService
 from application.services.normalized_content_service import NormalizedContentService
 from application.services.raw_record_service import RawRecordService
-from application.services.xhs_platform_runner import XhsPlatformRunner
+from application.services.xhs_task_executor import XhsTaskExecutor
 from base.base_crawler import AbstractCrawler
 from connectors.xhs.errors import XhsDataFetchError
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
@@ -52,6 +53,8 @@ from .exception import DataFetchError, NoteNotFoundError
 from .field import SearchSortType
 from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
 from .login import XiaoHongShuLogin
+from schemas.tasks.models import CrawlTask
+from schemas.tasks.requirements import XhsCrawlRequirement
 
 
 class XiaoHongShuCrawler(AbstractCrawler):
@@ -71,7 +74,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = XhsPlatformRunner(
+        self.task_executor = XhsTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
@@ -97,53 +100,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
         }
         return bool(toggle_map.get(capability, False))
 
-    async def start(self) -> None:
-        playwright_proxy_format, httpx_proxy_format = None, None
-        if config.ENABLE_IP_PROXY:
-            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
-            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
-            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
-        self._platform_http_proxy = httpx_proxy_format
+    async def execute_platform_task(self, task: CrawlTask) -> dict[str, Any]:
+        """Execute a persisted Xiaohongshu crawl task through the platform task executor."""
+        return await self.task_executor.execute(task)
 
+    async def execute_platform_requirement(self, requirement: XhsCrawlRequirement) -> dict[str, Any]:
+        """Execute a requirement-driven Xiaohongshu crawl plan through the platform task executor."""
+        return await self.task_executor.execute_requirement(requirement)
+
+    async def start_with_requirement(self, requirement: XhsCrawlRequirement) -> dict[str, Any]:
+        """Boot runtime resources and execute a requirement-driven Xiaohongshu crawl."""
         async with async_playwright() as playwright:
-            # Choose launch mode based on configuration
-            if config.ENABLE_CDP_MODE:
-                utils.logger.info("[XiaoHongShuCrawler] Launching browser using CDP mode")
-                self.browser_context = await self.launch_browser_with_cdp(
-                    playwright,
-                    playwright_proxy_format,
-                    self.user_agent,
-                    headless=config.CDP_HEADLESS,
-                )
-            else:
-                utils.logger.info("[XiaoHongShuCrawler] Launching browser using standard mode")
-                # Launch a browser context.
-                chromium = playwright.chromium
-                self.browser_context = await self.launch_browser(
-                    chromium,
-                    playwright_proxy_format,
-                    self.user_agent,
-                    headless=config.HEADLESS,
-                )
-                # stealth.min.js is a js script to prevent the website from detecting the crawler.
-                await self.browser_context.add_init_script(path="libs/stealth.min.js")
+            await self._initialize_runtime(playwright)
+            return await self.execute_platform_requirement(requirement)
 
-            self.context_page = await self.browser_context.new_page()
-            await self.context_page.goto(self.index_url)
+    async def start(self) -> None:
+        async with async_playwright() as playwright:
+            await self._initialize_runtime(playwright)
 
-            # Create a client to interact with the Xiaohongshu website.
-            self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
-            if not await self.xhs_client.pong():
-                login_obj = XiaoHongShuLogin(
-                    login_type=config.LOGIN_TYPE,
-                    login_phone="",  # input your phone number
-                    browser_context=self.browser_context,
-                    context_page=self.context_page,
-                    cookie_str=config.COOKIES,
-                )
-                await login_obj.begin()
-                await self.xhs_client.update_cookies(browser_context=self.browser_context)
-            
             if config.CRAWLER_TYPE == "login":
                 utils.logger.info("[XiaoHongShuCrawler.start] Login mode, exiting...")
                 return
@@ -162,6 +136,49 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 pass
 
             utils.logger.info("[XiaoHongShuCrawler.start] Xhs Crawler finished ...")
+
+    async def _initialize_runtime(self, playwright: Playwright) -> None:
+        """Prepare proxy, browser, page, client, and login state for XHS crawling."""
+        playwright_proxy_format, httpx_proxy_format = None, None
+        if config.ENABLE_IP_PROXY:
+            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
+            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
+            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
+
+        if config.ENABLE_CDP_MODE:
+            utils.logger.info("[XiaoHongShuCrawler] Launching browser using CDP mode")
+            self.browser_context = await self.launch_browser_with_cdp(
+                playwright,
+                playwright_proxy_format,
+                self.user_agent,
+                headless=config.CDP_HEADLESS,
+            )
+        else:
+            utils.logger.info("[XiaoHongShuCrawler] Launching browser using standard mode")
+            chromium = playwright.chromium
+            self.browser_context = await self.launch_browser(
+                chromium,
+                playwright_proxy_format,
+                self.user_agent,
+                headless=config.HEADLESS,
+            )
+            await self.browser_context.add_init_script(path="libs/stealth.min.js")
+
+        self.context_page = await self.browser_context.new_page()
+        await self.context_page.goto(self.index_url)
+
+        self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
+        if not await self.xhs_client.pong():
+            login_obj = XiaoHongShuLogin(
+                login_type=config.LOGIN_TYPE,
+                login_phone="",
+                browser_context=self.browser_context,
+                context_page=self.context_page,
+                cookie_str=config.COOKIES,
+            )
+            await login_obj.begin()
+            await self.xhs_client.update_cookies(browser_context=self.browser_context)
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
@@ -441,10 +458,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    result = await self.platform_runner.run_search_page(
-                        keyword=keyword,
-                        page=page,
-                        sort_type=config.SORT_TYPE or SearchSortType.GENERAL.value,
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={
+                                "keyword": keyword,
+                                "page": page,
+                                "sort_type": config.SORT_TYPE or SearchSortType.GENERAL.value,
+                            },
+                        )
                     )
                 except XhsDataFetchError as exc:
                     utils.logger.error(f"[XiaoHongShuCrawler.search_with_platform_runner] search error: {exc}")
@@ -494,10 +516,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def get_note_detail_with_platform_runner(self, note_id: str, xsec_source: str, xsec_token: str) -> Optional[Dict]:
         """Get note detail through the new XHS platform runner."""
         try:
-            result = await self.platform_runner.run_detail(
-                note_id=note_id,
-                xsec_source=xsec_source,
-                xsec_token=xsec_token,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="detail",
+                    params={"note_id": note_id, "xsec_source": xsec_source, "xsec_token": xsec_token},
+                )
             )
             return result.get("note")
         except XhsDataFetchError as exc:
@@ -508,10 +531,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Get Xiaohongshu comments through the new platform runner."""
         try:
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments_with_platform_runner] Begin get note comments {note_id}")
-            result = await self.platform_runner.run_comments(
-                note_id=note_id,
-                xsec_token=xsec_token,
-                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="comments",
+                    params={
+                        "note_id": note_id,
+                        "xsec_token": xsec_token,
+                        "limit": config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+                    },
+                )
             )
             comments = result.get("comments", [])
             if comments:
@@ -529,7 +557,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
         for creator_url in config.XHS_CREATOR_ID_LIST:
             try:
                 parsed_creator = parse_creator_info_from_url(creator_url)
-                creator_result = await self.platform_runner.run_creator(creator_url=creator_url)
+                creator_result = await self.execute_platform_task(
+                    self._new_platform_task(task_type="creator", params={"creator_url": creator_url})
+                )
             except ValueError as exc:
                 utils.logger.error(
                     f"[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] parse creator URL failed, creator_url:{creator_url}, err:{exc}"
@@ -547,10 +577,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
             all_notes: List[Dict] = []
             while True:
                 try:
-                    contents_result = await self.platform_runner.run_creator_contents(
-                        creator_url=creator_url,
-                        cursor=cursor,
-                        limit=min(30, config.CRAWLER_MAX_NOTES_COUNT),
+                    contents_result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="creator_contents",
+                            params={
+                                "creator_url": creator_url,
+                                "cursor": cursor,
+                                "limit": min(30, config.CRAWLER_MAX_NOTES_COUNT),
+                            },
+                        )
                     )
                 except XhsDataFetchError as exc:
                     utils.logger.error(
@@ -740,3 +775,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
             extension_file_name = f"{videoNum}.mp4"
             videoNum += 1
             await xhs_store.update_xhs_note_video(note_id, content, extension_file_name)
+    def _new_platform_task(self, *, task_type: str, params: Dict[str, Any]) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"xhs-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="xhs",
+            task_type=task_type,
+            status="planned",
+            params=params,
+        )

@@ -29,7 +29,7 @@ class CrawlerExecutionPlanner:
         if self._supports_platform_requirement_entry(config):
             return CrawlerExecutionPlan(
                 mode="platform_requirement",
-                command=self._build_douyin_requirement_command(config),
+                command=self._build_platform_requirement_command(config),
             )
         return CrawlerExecutionPlan(
             mode="legacy_main",
@@ -39,17 +39,27 @@ class CrawlerExecutionPlanner:
     @staticmethod
     def _supports_platform_requirement_entry(config: ResolvedCrawlerConfig) -> bool:
         return (
-            config.platform == PlatformEnum.DOUYIN
+            config.platform in {
+                PlatformEnum.XHS,
+                PlatformEnum.DOUYIN,
+                PlatformEnum.KUAISHOU,
+                PlatformEnum.BILIBILI,
+                PlatformEnum.WEIBO,
+                PlatformEnum.TIEBA,
+                PlatformEnum.ZHIHU,
+            }
             and config.crawler_type in {CrawlerTypeEnum.SEARCH, CrawlerTypeEnum.DETAIL, CrawlerTypeEnum.CREATOR}
         )
 
     @staticmethod
-    def _build_douyin_requirement_command(config: ResolvedCrawlerConfig) -> list[str]:
+    def _build_platform_requirement_command(config: ResolvedCrawlerConfig) -> list[str]:
         cmd = [
             "uv",
             "run",
             "python",
-            "run_douyin_requirement.py",
+            "run_platform_requirement.py",
+            "--platform",
+            config.platform.value,
             "--mode",
             config.crawler_type.value,
             "--login-type",
@@ -68,18 +78,17 @@ class CrawlerExecutionPlanner:
                 cmd.extend(["--keyword", keyword])
             cmd.extend(["--start-page", str(config.start_page)])
             cmd.extend(["--max-pages", "1"])
-            cmd.extend(["--sort-type", str(config.sort_type or "0")])
+            if config.sort_type:
+                cmd.extend(["--sort-type", str(config.sort_type)])
         elif config.crawler_type == CrawlerTypeEnum.DETAIL:
-            for aweme_id in [item.strip() for item in config.specified_ids.split(",") if item.strip()]:
-                cmd.extend(["--aweme-id", aweme_id])
+            for specified_id in [item.strip() for item in config.specified_ids.split(",") if item.strip()]:
+                cmd.extend(["--specified-id", specified_id])
         elif config.crawler_type == CrawlerTypeEnum.CREATOR:
             for creator_id in [item.strip() for item in config.creator_ids.split(",") if item.strip()]:
                 cmd.extend(["--creator-id", creator_id])
 
         if config.enable_comments:
             cmd.append("--include-comments")
-        if config.crawler_type != CrawlerTypeEnum.DETAIL:
-            cmd.append("--include-detail")
         if config.comment_time_filter_h > 0:
             cmd.extend(["--comment-limit", "50"])
         return cmd

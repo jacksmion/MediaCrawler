@@ -22,6 +22,7 @@ import asyncio
 import os
 # import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
 import time
+import uuid
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple
 
@@ -36,7 +37,7 @@ from playwright.async_api import (
 import config
 from application.services.crawl_state_service import CrawlStateService
 from application.services.event_service import EventService
-from application.services.kuaishou_platform_runner import KuaishouPlatformRunner
+from application.services.kuaishou_task_executor import KuaishouTaskExecutor
 from application.services.normalized_content_service import NormalizedContentService
 from application.services.raw_record_service import RawRecordService
 from base.base_crawler import AbstractCrawler
@@ -52,6 +53,7 @@ from .client import KuaiShouClient
 from .exception import DataFetchError
 from .help import parse_video_info_from_url, parse_creator_info_from_url
 from .login import KuaishouLogin
+from schemas.tasks.models import CrawlTask
 
 
 class KuaishouCrawler(AbstractCrawler):
@@ -70,12 +72,24 @@ class KuaishouCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = KuaishouPlatformRunner(
+        self.task_executor = KuaishouTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
             normalized_content_service=self.normalized_content_service,
             raw_record_service=self.raw_record_service,
+        )
+
+    async def execute_platform_task(self, task: CrawlTask) -> dict:
+        return await self.task_executor.execute(task)
+
+    def _new_platform_task(self, *, task_type: str, params: Dict) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"ks-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="kuaishou",
+            task_type=task_type,
+            status="planned",
+            params=params,
         )
 
     @staticmethod
@@ -237,10 +251,11 @@ class KuaishouCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    result = await self.platform_runner.run_search_page(
-                        keyword=keyword,
-                        page=page,
-                        search_session_id=search_session_id,
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={"keyword": keyword, "page": page, "search_session_id": search_session_id},
+                        )
                     )
                 except KuaishouDataFetchError as exc:
                     utils.logger.error(
@@ -319,7 +334,9 @@ class KuaishouCrawler(AbstractCrawler):
 
     async def get_video_info_with_platform_runner(self, video_id: str) -> Optional[Dict]:
         try:
-            result = await self.platform_runner.run_detail(video_id=video_id)
+            result = await self.execute_platform_task(
+                self._new_platform_task(task_type="detail", params={"video_id": video_id})
+            )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
                 f"[KuaishouCrawler.get_video_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}"
@@ -409,9 +426,11 @@ class KuaishouCrawler(AbstractCrawler):
             utils.logger.info(
                 f"[KuaishouCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for video {video_id}"
             )
-            result = await self.platform_runner.run_comments(
-                video_id=video_id,
-                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            result = await self.execute_platform_task(
+                self._new_platform_task(
+                    task_type="comments",
+                    params={"video_id": video_id, "limit": config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES},
+                )
             )
             comments = result.get("comments", [])
             if comments:
@@ -553,7 +572,9 @@ class KuaishouCrawler(AbstractCrawler):
             try:
                 creator_info: CreatorUrlInfo = parse_creator_info_from_url(creator_url)
                 user_id = creator_info.user_id
-                creator_result = await self.platform_runner.run_creator(creator_id=user_id)
+                creator_result = await self.execute_platform_task(
+                    self._new_platform_task(task_type="creator", params={"creator_id": user_id})
+                )
                 creator_payload = creator_result.get("creator", {})
                 if creator_payload:
                     await kuaishou_store.save_creator(user_id, creator=creator_payload)
@@ -565,9 +586,11 @@ class KuaishouCrawler(AbstractCrawler):
             all_video_ids: List[str] = []
             while True:
                 try:
-                    result = await self.platform_runner.run_creator_contents(
-                        creator_id=user_id,
-                        cursor=next_cursor,
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="creator_contents",
+                            params={"creator_id": user_id, "cursor": next_cursor},
+                        )
                     )
                 except KuaishouDataFetchError as e:
                     utils.logger.error(

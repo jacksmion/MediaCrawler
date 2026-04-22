@@ -20,6 +20,7 @@
 import asyncio
 import os
 import random
+import uuid
 from asyncio import Task
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -33,7 +34,6 @@ from playwright.async_api import (
 
 import config
 from application.services.crawl_state_service import CrawlStateService
-from application.services.douyin_platform_runner import DouyinPlatformRunner
 from application.services.douyin_task_executor import DouyinTaskExecutor
 from application.services.event_service import EventService
 from application.services.normalized_content_service import NormalizedContentService
@@ -70,14 +70,13 @@ class DouYinCrawler(AbstractCrawler):
         self.event_service = EventService()
         self.normalized_content_service = NormalizedContentService()
         self.raw_record_service = RawRecordService()
-        self.platform_runner = DouyinPlatformRunner(
+        self.task_executor = DouyinTaskExecutor(
             self,
             crawl_state_service=self.crawl_state_service,
             event_service=self.event_service,
             normalized_content_service=self.normalized_content_service,
             raw_record_service=self.raw_record_service,
         )
-        self.task_executor = DouyinTaskExecutor(self.platform_runner)
 
     @staticmethod
     def _douyin_platform_runner_mode() -> str:
@@ -276,10 +275,11 @@ class DouYinCrawler(AbstractCrawler):
                     page += 1
                     continue
                 try:
-                    result = await self.platform_runner.run_search_page(
-                        keyword=keyword,
-                        page=page,
-                        search_id=search_id,
+                    result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="search",
+                            params={"keyword": keyword, "page": page, "search_id": search_id},
+                        )
                     )
                 except DouyinDataFetchError as exc:
                     utils.logger.error(
@@ -383,7 +383,9 @@ class DouYinCrawler(AbstractCrawler):
     async def get_aweme_detail_with_platform_connector(self, aweme_id: str) -> Any:
         """Fetch aweme detail through the new connector bridge and archive its outputs."""
         try:
-            result = await self.platform_runner.run_detail(aweme_id=aweme_id)
+            result = await self.execute_platform_task(
+                self._new_platform_task(task_type="detail", params={"aweme_id": aweme_id})
+            )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
                 f"[DouYinCrawler.get_aweme_detail_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching aweme {aweme_id}"
@@ -435,7 +437,9 @@ class DouYinCrawler(AbstractCrawler):
     async def get_comments_with_platform_connector(self, aweme_id: str) -> None:
         """Fetch comments through the new connector bridge and persist event/raw data."""
         try:
-            comment_result = await self.platform_runner.run_comments(aweme_id=aweme_id)
+            comment_result = await self.execute_platform_task(
+                self._new_platform_task(task_type="comments", params={"aweme_id": aweme_id})
+            )
             comments = comment_result.get("comments", [])
             if comments:
                 await douyin_store.batch_update_dy_aweme_comments(aweme_id, comments)
@@ -498,7 +502,9 @@ class DouYinCrawler(AbstractCrawler):
                 continue
 
             try:
-                creator_result = await self.platform_runner.run_creator(creator_id=user_id)
+                creator_result = await self.execute_platform_task(
+                    self._new_platform_task(task_type="creator", params={"creator_id": user_id})
+                )
                 creator_payload = creator_result.get("creator", {})
                 if creator_payload:
                     await douyin_store.save_creator(user_id, creator=creator_payload)
@@ -512,9 +518,11 @@ class DouYinCrawler(AbstractCrawler):
             all_video_ids: List[str] = []
             while True:
                 try:
-                    contents_result = await self.platform_runner.run_creator_contents(
-                        creator_id=user_id,
-                        cursor=next_cursor,
+                    contents_result = await self.execute_platform_task(
+                        self._new_platform_task(
+                            task_type="creator_contents",
+                            params={"creator_id": user_id, "cursor": next_cursor},
+                        )
                     )
                 except DouyinDataFetchError as exc:
                     utils.logger.error(
@@ -724,3 +732,11 @@ class DouYinCrawler(AbstractCrawler):
             return
         extension_file_name = f"video.mp4"
         await douyin_store.update_dy_aweme_video(aweme_id, content, extension_file_name)
+    def _new_platform_task(self, *, task_type: str, params: Dict[str, Any]) -> CrawlTask:
+        return CrawlTask(
+            task_id=f"dy-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
+            platform_code="douyin",
+            task_type=task_type,
+            status="planned",
+            params=params,
+        )
