@@ -193,6 +193,7 @@ class DouyinConnector(BaseConnector):
         content_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = await self.session_service.refresh_from_browser(
             self.hybrid_executor.browser_executor,

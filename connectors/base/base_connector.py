@@ -42,6 +42,7 @@ class BaseConnector(ABC):
         content_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Fetch a page or batch of comments for a content item."""
 
@@ -61,4 +62,3 @@ class BaseConnector(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Release runtime resources."""
-

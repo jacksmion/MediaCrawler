@@ -20,6 +20,21 @@
 
 # Zhihu platform configuration
 
+# Unified Zhihu new-platform execution mode.
+# Supported values:
+# - "legacy": keep all Zhihu flows on the legacy implementation
+# - "search" / "detail" / "comments" / "creator": route only one capability to the new runner
+# - "all": route all migrated Zhihu capabilities to the new runner
+#
+# The legacy ENABLE_ZHIHU_CONNECTOR_* flags below are still supported for
+# backward compatibility. This mode takes precedence when it is not "legacy".
+ZHIHU_PLATFORM_RUNNER_MODE = "legacy"
+
+ENABLE_ZHIHU_CONNECTOR_SEARCH = False
+ENABLE_ZHIHU_CONNECTOR_DETAIL = False
+ENABLE_ZHIHU_CONNECTOR_COMMENTS = False
+ENABLE_ZHIHU_CONNECTOR_CREATOR = False
+
 # Specify Zhihu user URL list
 ZHIHU_CREATOR_URL_LIST = [
     "https://www.zhihu.com/people/yd1234567",

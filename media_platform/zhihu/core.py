@@ -34,9 +34,14 @@ from playwright.async_api import (
 )
 
 import config
+from application.services.crawl_state_service import CrawlStateService
+from application.services.event_service import EventService
+from application.services.normalized_content_service import NormalizedContentService
+from application.services.raw_record_service import RawRecordService
+from application.services.zhihu_platform_runner import ZhihuPlatformRunner
 from constant import zhihu as constant
 from base.base_crawler import AbstractCrawler
-from model.m_zhihu import ZhihuContent, ZhihuCreator
+from model.m_zhihu import ZhihuComment, ZhihuContent, ZhihuCreator
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import zhihu as zhihu_store
 from tools import utils
@@ -45,6 +50,7 @@ from var import crawler_type_var, source_keyword_var
 
 from .client import ZhiHuClient
 from .exception import DataFetchError
+from connectors.zhihu.errors import ZhihuDataFetchError
 from .help import ZhihuExtractor, judge_zhihu_url
 from .login import ZhiHuLogin
 
@@ -62,6 +68,36 @@ class ZhihuCrawler(AbstractCrawler):
         self._extractor = ZhihuExtractor()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self._platform_http_proxy: Optional[str] = None
+        self.crawl_state_service = CrawlStateService()
+        self.event_service = EventService()
+        self.normalized_content_service = NormalizedContentService()
+        self.raw_record_service = RawRecordService()
+        self.platform_runner = ZhihuPlatformRunner(
+            self,
+            crawl_state_service=self.crawl_state_service,
+            event_service=self.event_service,
+            normalized_content_service=self.normalized_content_service,
+            raw_record_service=self.raw_record_service,
+        )
+
+    @staticmethod
+    def _zhihu_platform_runner_mode() -> str:
+        return str(getattr(config, "ZHIHU_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
+
+    def _use_platform_runner_for(self, capability: str) -> bool:
+        mode = self._zhihu_platform_runner_mode()
+        if mode == "all":
+            return True
+        if mode == capability:
+            return True
+        toggle_map = {
+            "search": getattr(config, "ENABLE_ZHIHU_CONNECTOR_SEARCH", False),
+            "detail": getattr(config, "ENABLE_ZHIHU_CONNECTOR_DETAIL", False),
+            "comments": getattr(config, "ENABLE_ZHIHU_CONNECTOR_COMMENTS", False),
+            "creator": getattr(config, "ENABLE_ZHIHU_CONNECTOR_CREATOR", False),
+        }
+        return bool(toggle_map.get(capability, False))
 
     async def start(self) -> None:
         """
@@ -78,6 +114,7 @@ class ZhihuCrawler(AbstractCrawler):
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(
                 ip_proxy_info
             )
+        self._platform_http_proxy = httpx_proxy_format
 
         async with async_playwright() as playwright:
             # Choose launch mode based on configuration
@@ -144,6 +181,9 @@ class ZhihuCrawler(AbstractCrawler):
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
+        if self._use_platform_runner_for("search"):
+            await self.search_with_platform_connector()
+            return
         utils.logger.info("[ZhihuCrawler.search] Begin search zhihu keywords")
         zhihu_limit_count = 20  # zhihu limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < zhihu_limit_count:
@@ -193,6 +233,42 @@ class ZhihuCrawler(AbstractCrawler):
                     utils.logger.error("[ZhihuCrawler.search] Search content error")
                     return
 
+    async def search_with_platform_connector(self) -> None:
+        """Run search through the new Zhihu platform runner while keeping legacy storage flow."""
+        utils.logger.info("[ZhihuCrawler.search_with_platform_connector] Begin search zhihu keywords via platform runner")
+        zhihu_limit_count = 20
+        if config.CRAWLER_MAX_NOTES_COUNT < zhihu_limit_count:
+            config.CRAWLER_MAX_NOTES_COUNT = zhihu_limit_count
+        start_page = config.START_PAGE
+        for keyword in config.KEYWORDS.split(","):
+            source_keyword_var.set(keyword)
+            utils.logger.info(f"[ZhihuCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            page = 1
+            while (page - start_page + 1) * zhihu_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+                if page < start_page:
+                    utils.logger.info(f"[ZhihuCrawler.search_with_platform_connector] Skip page {page}")
+                    page += 1
+                    continue
+                try:
+                    result = await self.platform_runner.run_search_page(keyword=keyword, page=page, page_size=zhihu_limit_count)
+                except ZhihuDataFetchError as exc:
+                    utils.logger.error(
+                        f"[ZhihuCrawler.search_with_platform_connector] Search content error, keyword: {keyword}, page: {page}, err: {exc}"
+                    )
+                    return
+                content_list = [ZhihuContent.model_validate(item) for item in result.get("items", [])]
+                if not content_list:
+                    utils.logger.info("[ZhihuCrawler.search_with_platform_connector] No more content!")
+                    break
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(
+                    f"[ZhihuCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page}"
+                )
+                page += 1
+                for content in content_list:
+                    await zhihu_store.update_zhihu_content(content)
+                await self.batch_get_content_comments(content_list)
+
     async def batch_get_content_comments(self, content_list: List[ZhihuContent]):
         """
         Batch get content comments
@@ -230,6 +306,9 @@ class ZhihuCrawler(AbstractCrawler):
 
         """
         async with semaphore:
+            if self._use_platform_runner_for("comments"):
+                await self.get_comments_with_platform_connector(content_item)
+                return
             utils.logger.info(
                 f"[ZhihuCrawler.get_comments] Begin get note id comments {content_item.content_id}"
             )
@@ -244,12 +323,41 @@ class ZhihuCrawler(AbstractCrawler):
                 callback=zhihu_store.batch_update_zhihu_note_comments,
             )
 
+    async def get_comments_with_platform_connector(
+        self, content_item: ZhihuContent
+    ) -> None:
+        """Fetch comments through the new Zhihu platform runner and keep legacy storage."""
+        try:
+            utils.logger.info(
+                f"[ZhihuCrawler.get_comments_with_platform_connector] Begin get note id comments {content_item.content_id}"
+            )
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[ZhihuCrawler.get_comments_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for content {content_item.content_id}"
+            )
+            result = await self.platform_runner.run_comments(
+                content=content_item,
+                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            )
+            comments = result.get("comments", [])
+            if comments:
+                await zhihu_store.batch_update_zhihu_note_comments(
+                    [ZhihuComment.model_validate(comment) for comment in comments]
+                )
+        except ZhihuDataFetchError as exc:
+            utils.logger.error(
+                f"[ZhihuCrawler.get_comments_with_platform_connector] Get comments error: {exc}"
+            )
+
     async def get_creators_and_notes(self) -> None:
         """
         Get creator's information and their notes and comments
         Returns:
 
         """
+        if self._use_platform_runner_for("creator"):
+            await self.get_creators_and_notes_with_platform_runner()
+            return
         utils.logger.info(
             "[ZhihuCrawler.get_creators_and_notes] Begin get xiaohongshu creators"
         )
@@ -299,6 +407,55 @@ class ZhihuCrawler(AbstractCrawler):
             # Get all comments of the creator's contents
             await self.batch_get_content_comments(all_content_list)
 
+    async def get_creators_and_notes_with_platform_runner(self) -> None:
+        """Fetch creator info and contents through the new Zhihu platform runner."""
+        utils.logger.info("[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Begin get zhihu creators")
+        for user_link in config.ZHIHU_CREATOR_URL_LIST:
+            utils.logger.info(
+                f"[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Begin get creator {user_link}"
+            )
+            user_url_token = user_link.split("/")[-1]
+            try:
+                creator_result = await self.platform_runner.run_creator(creator_id=user_url_token)
+            except ZhihuDataFetchError as exc:
+                utils.logger.error(
+                    f"[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Creator {user_url_token} fetch failed: {exc}"
+                )
+                continue
+
+            creator_payload = creator_result.get("creator", {})
+            creator_info = ZhihuCreator.model_validate(creator_payload) if creator_payload else None
+            if not creator_info:
+                utils.logger.info(
+                    f"[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Creator {user_url_token} not found"
+                )
+                continue
+            await zhihu_store.save_creator(creator=creator_info)
+            next_cursor = ""
+            all_content_list: List[ZhihuContent] = []
+            while True:
+                try:
+                    contents_result = await self.platform_runner.run_creator_contents(
+                        creator_id=user_url_token,
+                        cursor=next_cursor,
+                    )
+                except ZhihuDataFetchError as exc:
+                    utils.logger.error(
+                        f"[ZhihuCrawler.get_creators_and_notes_with_platform_runner] Creator contents fetch failed: {exc}"
+                    )
+                    break
+                contents = [ZhihuContent.model_validate(item) for item in contents_result.get("items", [])]
+                if not contents:
+                    break
+                await zhihu_store.batch_update_zhihu_contents(contents)
+                all_content_list.extend(contents)
+                if not contents_result.get("has_more"):
+                    break
+                next_cursor = str(contents_result.get("next_cursor") or "")
+                if not next_cursor:
+                    break
+            await self.batch_get_content_comments(all_content_list)
+
     async def get_note_detail(
         self, full_note_url: str, semaphore: asyncio.Semaphore
     ) -> Optional[ZhihuContent]:
@@ -312,6 +469,8 @@ class ZhihuCrawler(AbstractCrawler):
 
         """
         async with semaphore:
+            if self._use_platform_runner_for("detail"):
+                return await self.get_note_detail_with_platform_connector(full_note_url)
             utils.logger.info(
                 f"[ZhihuCrawler.get_specified_notes] Begin get specified note {full_note_url}"
             )
@@ -356,6 +515,36 @@ class ZhihuCrawler(AbstractCrawler):
                 utils.logger.info(f"[ZhihuCrawler.get_note_detail] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}")
 
                 return result
+
+    async def get_note_detail_with_platform_connector(
+        self, full_note_url: str
+    ) -> Optional[ZhihuContent]:
+        """Fetch specified Zhihu content through the new platform runner."""
+        try:
+            note_type = judge_zhihu_url(full_note_url)
+            question_id = ""
+            content_id = ""
+            if note_type == constant.ANSWER_NAME:
+                question_id = full_note_url.split("/")[-3]
+                content_id = full_note_url.split("/")[-1]
+            else:
+                content_id = full_note_url.split("/")[-1]
+            result = await self.platform_runner.run_detail(
+                content_id=content_id,
+                content_type=note_type,
+                detail_url=full_note_url,
+                question_id=question_id,
+            )
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[ZhihuCrawler.get_note_detail_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {content_id}"
+            )
+            return result.get("content")
+        except ZhihuDataFetchError as exc:
+            utils.logger.error(
+                f"[ZhihuCrawler.get_note_detail_with_platform_connector] Get note detail error: {exc}"
+            )
+            return None
 
     async def get_specified_notes(self):
         """

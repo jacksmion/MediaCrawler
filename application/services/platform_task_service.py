@@ -53,6 +53,7 @@ class PlatformTaskService:
                 content_id=content_id,
                 cursor=request.payload.get("cursor"),
                 limit=request.payload.get("limit"),
+                extra=request.payload.get("extra"),
             )
             return PlatformTaskResult(
                 job_id=request.job_id,
