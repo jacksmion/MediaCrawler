@@ -76,6 +76,26 @@ class CrawlerStartRequest(BaseModel):
     comment_time_filter_h: int = 0  # Max age of comments to crawl in hours (0 = unlimited)
 
 
+class ResolvedCrawlerConfig(BaseModel):
+    """Final crawler config after merging request values with runtime overrides."""
+
+    platform: PlatformEnum
+    login_type: LoginTypeEnum
+    crawler_type: CrawlerTypeEnum
+    keywords: str = ""
+    specified_ids: str = ""
+    creator_ids: str = ""
+    start_page: int = 1
+    enable_comments: bool = True
+    enable_sub_comments: bool = False
+    save_option: SaveDataOptionEnum = SaveDataOptionEnum.JSONL
+    cookies: str = ""
+    headless: bool = False
+    sort_type: str = ""
+    comment_time_filter_h: int = 0
+    runtime_override_keys: list[str] = []
+
+
 class CrawlerStatusResponse(BaseModel):
     """Crawler status response"""
     status: Literal["idle", "running", "stopping", "error"]

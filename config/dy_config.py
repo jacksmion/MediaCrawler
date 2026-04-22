@@ -23,6 +23,29 @@ PUBLISH_TIME_TYPE = 0
 # Search sort type: 0-General, 1-Most likes, 2-Latest published
 SEARCH_SORT_TYPE = 2
 
+# Unified Douyin new-platform execution mode.
+# Supported values:
+# - "legacy": keep all Douyin flows on the legacy implementation
+# - "search" / "detail" / "comments" / "creator": route only one capability to the new runner
+# - "all": route all migrated Douyin capabilities to the new runner
+#
+# The legacy ENABLE_DOUYIN_CONNECTOR_* flags below are still supported for
+# backward compatibility. This mode takes precedence when it is not "legacy".
+DOUYIN_PLATFORM_RUNNER_MODE = "legacy"
+
+# Whether to route Douyin search through the new platform connector bridge.
+# This keeps legacy detail/comment logic intact while we migrate incrementally.
+ENABLE_DOUYIN_CONNECTOR_SEARCH = False
+
+# Whether to route Douyin detail fetches through the new platform connector bridge.
+ENABLE_DOUYIN_CONNECTOR_DETAIL = False
+
+# Whether to route Douyin comment fetches through the new platform connector bridge.
+ENABLE_DOUYIN_CONNECTOR_COMMENTS = False
+
+# Whether to route Douyin creator/profile fetches through the new platform connector bridge.
+ENABLE_DOUYIN_CONNECTOR_CREATOR = False
+
 # Specify DY video URL list (supports multiple formats)
 # Supported formats:
 # 1. Full video URL: "https://www.douyin.com/video/7525538910311632128"

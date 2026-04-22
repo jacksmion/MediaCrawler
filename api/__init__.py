@@ -17,3 +17,7 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 # WebUI API Module for MediaCrawler
+
+from .app import create_app
+
+__all__ = ["create_app"]

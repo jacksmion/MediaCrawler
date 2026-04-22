@@ -17,78 +17,62 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 import asyncio
-import subprocess
-import signal
 import os
-from typing import Optional, List
-from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from ..schemas import CrawlerStartRequest, LogEntry
+from .crawler_command_builder import CrawlerCommandBuilder
+from .crawler_config_resolver import CrawlerConfigResolver
+from .crawler_execution_planner import CrawlerExecutionPlanner
+from .crawler_executor import CrawlerExecutor
+from .subprocess_crawler_executor import SubprocessCrawlerExecutor
+from .crawler_log_service import CrawlerLogService
+from .crawler_process_runtime import CrawlerProcessRuntime
 
 
 class CrawlerManager:
     """Crawler process manager"""
 
-    def __init__(self):
+    def __init__(self, executor: CrawlerExecutor | None = None):
         self._lock = asyncio.Lock()
-        self.process: Optional[subprocess.Popen] = None
-        self.status = "idle"
-        self.started_at: Optional[datetime] = None
-        self.current_config: Optional[CrawlerStartRequest] = None
-        self._log_id = 0
-        self._logs: List[LogEntry] = []
+        self.runtime = CrawlerProcessRuntime()
+        self.command_builder = CrawlerCommandBuilder()
+        self.config_resolver = CrawlerConfigResolver()
+        self.execution_planner = CrawlerExecutionPlanner(self.command_builder)
+        self.executor = executor or SubprocessCrawlerExecutor()
+        self.log_service = CrawlerLogService()
         self._read_task: Optional[asyncio.Task] = None
         # Project root directory
         self._project_root = Path(__file__).parent.parent.parent
-        # Log queue - for pushing to WebSocket
-        self._log_queue: Optional[asyncio.Queue] = None
 
     @property
-    def logs(self) -> List[LogEntry]:
-        return self._logs
+    def logs(self) -> list[LogEntry]:
+        return self.log_service.logs
+
+    @property
+    def process(self):
+        return self.runtime.process
+
+    @property
+    def status(self) -> str:
+        return self.runtime.status
+
+    @property
+    def started_at(self):
+        return self.runtime.started_at
+
+    @property
+    def current_config(self):
+        return self.runtime.current_config
 
     def get_log_queue(self) -> asyncio.Queue:
         """Get or create log queue"""
-        if self._log_queue is None:
-            self._log_queue = asyncio.Queue()
-        return self._log_queue
-
-    def _create_log_entry(self, message: str, level: str = "info") -> LogEntry:
-        """Create log entry"""
-        self._log_id += 1
-        entry = LogEntry(
-            id=self._log_id,
-            timestamp=datetime.now().strftime("%H:%M:%S"),
-            level=level,
-            message=message
-        )
-        self._logs.append(entry)
-        # Keep last 500 logs
-        if len(self._logs) > 500:
-            self._logs = self._logs[-500:]
-        return entry
+        return self.log_service.get_log_queue()
 
     async def _push_log(self, entry: LogEntry):
         """Push log to queue"""
-        if self._log_queue is not None:
-            try:
-                self._log_queue.put_nowait(entry)
-            except asyncio.QueueFull:
-                pass
-
-    def _parse_log_level(self, line: str) -> str:
-        """Parse log level"""
-        line_upper = line.upper()
-        if "ERROR" in line_upper or "FAILED" in line_upper:
-            return "error"
-        elif "WARNING" in line_upper or "WARN" in line_upper:
-            return "warning"
-        elif "SUCCESS" in line_upper or "完成" in line or "成功" in line:
-            return "success"
-        elif "DEBUG" in line_upper:
-            return "debug"
-        return "info"
+        await self.log_service.push(entry)
 
     async def start(self, config: CrawlerStartRequest) -> bool:
         """Start crawler process"""
@@ -97,56 +81,54 @@ class CrawlerManager:
                 return False
 
             # Clear old logs
-            self._logs = []
-            self._log_id = 0
+            self.log_service.reset()
 
-            # Clear pending queue (don't replace object to avoid WebSocket broadcast coroutine holding old queue reference)
-            if self._log_queue is None:
-                self._log_queue = asyncio.Queue()
-            else:
-                try:
-                    while True:
-                        self._log_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
+            resolved_config = await self.config_resolver.resolve(config)
+            execution_plan = self.execution_planner.build_plan(resolved_config)
 
             # Build command line arguments
-            cmd = self._build_command(config)
+            cmd = execution_plan.command
 
             # Log start information
-            entry = self._create_log_entry(f"Starting crawler: {' '.join(cmd)}", "info")
+            entry = self.log_service.create_entry(f"Starting crawler: {' '.join(cmd)}", "info")
             await self._push_log(entry)
 
             try:
-                # Start subprocess
-                self.process = subprocess.Popen(
+                self.runtime.process = await self.executor.start(
                     cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding='utf-8',
-                    bufsize=1,
-                    cwd=str(self._project_root),
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"}
+                    cwd=self._project_root,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
                 )
 
-                self.status = "running"
-                self.started_at = datetime.now()
-                self.current_config = config
+                from datetime import datetime
+                self.runtime.status = "running"
+                self.runtime.started_at = datetime.now()
+                self.runtime.current_config = resolved_config
 
-                entry = self._create_log_entry(
-                    f"Crawler started on platform: {config.platform.value}, type: {config.crawler_type.value}",
+                entry = self.log_service.create_entry(
+                    f"Crawler started on platform: {resolved_config.platform.value}, type: {resolved_config.crawler_type.value}",
                     "success"
                 )
                 await self._push_log(entry)
+                entry = self.log_service.create_entry(
+                    f"Execution mode: {execution_plan.mode}",
+                    "debug",
+                )
+                await self._push_log(entry)
+                if resolved_config.runtime_override_keys:
+                    entry = self.log_service.create_entry(
+                        f"Applied runtime overrides: {', '.join(resolved_config.runtime_override_keys)}",
+                        "debug",
+                    )
+                    await self._push_log(entry)
 
                 # Start log reading task
                 self._read_task = asyncio.create_task(self._read_output())
 
                 return True
             except Exception as e:
-                self.status = "error"
-                entry = self._create_log_entry(f"Failed to start crawler: {str(e)}", "error")
+                self.runtime.status = "error"
+                entry = self.log_service.create_entry(f"Failed to start crawler: {str(e)}", "error")
                 await self._push_log(entry)
                 return False
 
@@ -156,34 +138,34 @@ class CrawlerManager:
             if not self.process or self.process.poll() is not None:
                 return False
 
-            self.status = "stopping"
-            entry = self._create_log_entry("Sending SIGTERM to crawler process...", "warning")
+            self.runtime.status = "stopping"
+            entry = self.log_service.create_entry("Sending SIGTERM to crawler process...", "warning")
             await self._push_log(entry)
 
             try:
-                self.process.send_signal(signal.SIGTERM)
+                await self.executor.terminate(self.process)
 
                 # Wait for graceful exit (up to 15 seconds)
                 for _ in range(30):
-                    if self.process.poll() is not None:
+                    if not self.executor.is_running(self.process):
                         break
                     await asyncio.sleep(0.5)
 
                 # If still not exited, force kill
-                if self.process.poll() is None:
-                    entry = self._create_log_entry("Process not responding, sending SIGKILL...", "warning")
+                if self.executor.is_running(self.process):
+                    entry = self.log_service.create_entry("Process not responding, sending SIGKILL...", "warning")
                     await self._push_log(entry)
-                    self.process.kill()
+                    await self.executor.kill(self.process)
 
-                entry = self._create_log_entry("Crawler process terminated", "info")
+                entry = self.log_service.create_entry("Crawler process terminated", "info")
                 await self._push_log(entry)
 
             except Exception as e:
-                entry = self._create_log_entry(f"Error stopping crawler: {str(e)}", "error")
+                entry = self.log_service.create_entry(f"Error stopping crawler: {str(e)}", "error")
                 await self._push_log(entry)
 
-            self.status = "idle"
-            self.current_config = None
+            self.runtime.status = "idle"
+            self.runtime.current_config = None
 
             # Cancel log reading task
             if self._read_task:
@@ -202,48 +184,12 @@ class CrawlerManager:
             "error_message": None
         }
 
-    def _build_command(self, config: CrawlerStartRequest) -> list:
-        """Build main.py command line arguments"""
-        cmd = ["uv", "run", "python", "main.py"]
-
-        cmd.extend(["--platform", config.platform.value])
-        cmd.extend(["--lt", config.login_type.value])
-        cmd.extend(["--type", config.crawler_type.value])
-        cmd.extend(["--save_data_option", config.save_option.value])
-
-        # Pass different arguments based on crawler type
-        if config.crawler_type.value == "search" and config.keywords:
-            cmd.extend(["--keywords", config.keywords])
-        elif config.crawler_type.value == "detail" and config.specified_ids:
-            cmd.extend(["--specified_id", config.specified_ids])
-        elif config.crawler_type.value == "creator" and config.creator_ids:
-            cmd.extend(["--creator_id", config.creator_ids])
-
-        if config.start_page != 1:
-            cmd.extend(["--start", str(config.start_page)])
-
-        cmd.extend(["--get_comment", "true" if config.enable_comments else "false"])
-        cmd.extend(["--get_sub_comment", "true" if config.enable_sub_comments else "false"])
-
-        if config.cookies:
-            cmd.extend(["--cookies", config.cookies])
-        
-        if config.sort_type:
-            cmd.extend(["--sort", config.sort_type])
-            
-        if config.comment_time_filter_h > 0:
-            cmd.extend(["--comment_time_filter_h", str(config.comment_time_filter_h)])
-
-        cmd.extend(["--headless", "true" if config.headless else "false"])
-
-        return cmd
-
     async def _read_output(self):
         """Asynchronously read process output"""
         loop = asyncio.get_event_loop()
 
         try:
-            while self.process and self.process.poll() is None:
+            while self.process and self.executor.is_running(self.process):
                 # Read a line in thread pool
                 line = await loop.run_in_executor(
                     None, self.process.stdout.readline
@@ -251,8 +197,8 @@ class CrawlerManager:
                 if line:
                     line = line.strip()
                     if line:
-                        level = self._parse_log_level(line)
-                        entry = self._create_log_entry(line, level)
+                        level = self.log_service.parse_level(line)
+                        entry = self.log_service.create_entry(line, level)
                         await self._push_log(entry)
 
             # Read remaining output
@@ -263,24 +209,24 @@ class CrawlerManager:
                 if remaining:
                     for line in remaining.strip().split('\n'):
                         if line.strip():
-                            level = self._parse_log_level(line)
-                            entry = self._create_log_entry(line.strip(), level)
+                            level = self.log_service.parse_level(line)
+                            entry = self.log_service.create_entry(line.strip(), level)
                             await self._push_log(entry)
 
             # Process ended
             if self.status == "running":
-                exit_code = self.process.returncode if self.process else -1
+                exit_code = self.executor.return_code(self.process) if self.process else -1
                 if exit_code == 0:
-                    entry = self._create_log_entry("Crawler completed successfully", "success")
+                    entry = self.log_service.create_entry("Crawler completed successfully", "success")
                 else:
-                    entry = self._create_log_entry(f"Crawler exited with code: {exit_code}", "warning")
+                    entry = self.log_service.create_entry(f"Crawler exited with code: {exit_code}", "warning")
                 await self._push_log(entry)
-                self.status = "idle"
+                self.runtime.status = "idle"
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            entry = self._create_log_entry(f"Error reading output: {str(e)}", "error")
+            entry = self.log_service.create_entry(f"Error reading output: {str(e)}", "error")
             await self._push_log(entry)
 
 

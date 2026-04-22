@@ -22,6 +22,7 @@ from .crawler import (
     CrawlerTypeEnum,
     SaveDataOptionEnum,
     CrawlerStartRequest,
+    ResolvedCrawlerConfig,
     CrawlerStatusResponse,
     LogEntry,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "CrawlerTypeEnum",
     "SaveDataOptionEnum",
     "CrawlerStartRequest",
+    "ResolvedCrawlerConfig",
     "CrawlerStatusResponse",
     "LogEntry",
 ]

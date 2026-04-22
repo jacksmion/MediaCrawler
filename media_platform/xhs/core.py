@@ -419,6 +419,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 accept_downloads=True,
                 headless=headless,
                 proxy=playwright_proxy,  # type: ignore
+                channel="chrome",
                 viewport={
                     "width": 1920,
                     "height": 1080
@@ -427,7 +428,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             )
             return browser_context
         else:
-            browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
+            browser = await chromium.launch(headless=headless, proxy=playwright_proxy, channel="chrome")  # type: ignore
             browser_context = await browser.new_context(viewport={"width": 1920, "height": 1080}, user_agent=user_agent)
             return browser_context
 
