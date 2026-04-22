@@ -19,6 +19,13 @@
 
 # Kuaishou platform configuration
 
+KUAISHOU_PLATFORM_RUNNER_MODE = "legacy"
+
+ENABLE_KUAISHOU_CONNECTOR_SEARCH = False
+ENABLE_KUAISHOU_CONNECTOR_DETAIL = False
+ENABLE_KUAISHOU_CONNECTOR_COMMENTS = False
+ENABLE_KUAISHOU_CONNECTOR_CREATOR = False
+
 # Specify Kuaishou video URL list (supports complete URL or pure ID)
 # Supported formats:
 # 1. Full video URL: "https://www.kuaishou.com/short-video/3x3zxz4mjrsc8ke?authorId=3x84qugg4ch9zhs&streamSource=search"

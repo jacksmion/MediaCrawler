@@ -7,6 +7,7 @@ from .douyin_platform_runner import DouyinPlatformRunner
 from .douyin_task_executor import DouyinTaskExecutor
 from .douyin_task_planner import DouyinTaskPlanner
 from .event_service import EventService
+from .kuaishou_platform_runner import KuaishouPlatformRunner
 from .normalized_content_service import NormalizedContentService
 from .platform_task_service import PlatformTaskService
 from .raw_record_service import RawRecordService
@@ -22,6 +23,7 @@ __all__ = [
     "DouyinTaskExecutor",
     "DouyinTaskPlanner",
     "EventService",
+    "KuaishouPlatformRunner",
     "NormalizedContentService",
     "PlatformTaskService",
     "RawRecordService",

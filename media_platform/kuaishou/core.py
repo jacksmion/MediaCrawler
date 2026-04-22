@@ -34,7 +34,13 @@ from playwright.async_api import (
 )
 
 import config
+from application.services.crawl_state_service import CrawlStateService
+from application.services.event_service import EventService
+from application.services.kuaishou_platform_runner import KuaishouPlatformRunner
+from application.services.normalized_content_service import NormalizedContentService
+from application.services.raw_record_service import RawRecordService
 from base.base_crawler import AbstractCrawler
+from connectors.kuaishou.errors import KuaishouDataFetchError
 from model.m_kuaishou import VideoUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import kuaishou as kuaishou_store
@@ -59,6 +65,36 @@ class KuaishouCrawler(AbstractCrawler):
         self.user_agent = utils.get_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool, used for automatic proxy refresh
+        self._platform_http_proxy: Optional[str] = None
+        self.crawl_state_service = CrawlStateService()
+        self.event_service = EventService()
+        self.normalized_content_service = NormalizedContentService()
+        self.raw_record_service = RawRecordService()
+        self.platform_runner = KuaishouPlatformRunner(
+            self,
+            crawl_state_service=self.crawl_state_service,
+            event_service=self.event_service,
+            normalized_content_service=self.normalized_content_service,
+            raw_record_service=self.raw_record_service,
+        )
+
+    @staticmethod
+    def _kuaishou_platform_runner_mode() -> str:
+        return str(getattr(config, "KUAISHOU_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
+
+    def _use_platform_runner_for(self, capability: str) -> bool:
+        mode = self._kuaishou_platform_runner_mode()
+        if mode == "all":
+            return True
+        if mode == capability:
+            return True
+        toggle_map = {
+            "search": getattr(config, "ENABLE_KUAISHOU_CONNECTOR_SEARCH", False),
+            "detail": getattr(config, "ENABLE_KUAISHOU_CONNECTOR_DETAIL", False),
+            "comments": getattr(config, "ENABLE_KUAISHOU_CONNECTOR_COMMENTS", False),
+            "creator": getattr(config, "ENABLE_KUAISHOU_CONNECTOR_CREATOR", False),
+        }
+        return bool(toggle_map.get(capability, False))
 
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -70,6 +106,7 @@ class KuaishouCrawler(AbstractCrawler):
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(
                 ip_proxy_info
             )
+        self._platform_http_proxy = httpx_proxy_format
 
         async with async_playwright() as playwright:
             # Select startup mode based on configuration
@@ -126,6 +163,9 @@ class KuaishouCrawler(AbstractCrawler):
             utils.logger.info("[KuaishouCrawler.start] Kuaishou Crawler finished ...")
 
     async def search(self):
+        if self._use_platform_runner_for("search"):
+            await self.search_with_platform_connector()
+            return
         utils.logger.info("[KuaishouCrawler.search] Begin search kuaishou keywords")
         ks_limit_count = 20  # kuaishou limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < ks_limit_count:
@@ -180,6 +220,50 @@ class KuaishouCrawler(AbstractCrawler):
 
                 await self.batch_get_video_comments(video_id_list)
 
+    async def search_with_platform_connector(self):
+        utils.logger.info("[KuaishouCrawler.search_with_platform_connector] Begin search kuaishou keywords via platform runner")
+        ks_limit_count = 20
+        if config.CRAWLER_MAX_NOTES_COUNT < ks_limit_count:
+            config.CRAWLER_MAX_NOTES_COUNT = ks_limit_count
+        start_page = config.START_PAGE
+        for keyword in config.KEYWORDS.split(","):
+            search_session_id = ""
+            source_keyword_var.set(keyword)
+            utils.logger.info(f"[KuaishouCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            page = 1
+            while (page - start_page + 1) * ks_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+                if page < start_page:
+                    utils.logger.info(f"[KuaishouCrawler.search_with_platform_connector] Skip page: {page}")
+                    page += 1
+                    continue
+                try:
+                    result = await self.platform_runner.run_search_page(
+                        keyword=keyword,
+                        page=page,
+                        search_session_id=search_session_id,
+                    )
+                except KuaishouDataFetchError as exc:
+                    utils.logger.error(
+                        f"[KuaishouCrawler.search_with_platform_connector] search info by keyword:{keyword} err: {exc}"
+                    )
+                    break
+                video_items = result.get("items", [])
+                if not video_items:
+                    break
+                video_id_list: List[str] = []
+                for video_detail in video_items:
+                    photo_id = video_detail.get("photo", {}).get("id")
+                    if photo_id:
+                        video_id_list.append(photo_id)
+                    await kuaishou_store.update_kuaishou_video(video_item=video_detail)
+                search_session_id = result.get("next_cursor") or ""
+                page += 1
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(
+                    f"[KuaishouCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                )
+                await self.batch_get_video_comments(video_id_list)
+
     async def get_specified_videos(self):
         """Get the information and comments of the specified post"""
         utils.logger.info("[KuaishouCrawler.get_specified_videos] Parsing video URLs...")
@@ -210,6 +294,8 @@ class KuaishouCrawler(AbstractCrawler):
         """Get video detail task"""
         async with semaphore:
             try:
+                if self._use_platform_runner_for("detail"):
+                    return await self.get_video_info_with_platform_runner(video_id)
                 result = await self.ks_client.get_video_info(video_id)
 
                 # Sleep after fetching video details
@@ -230,6 +316,18 @@ class KuaishouCrawler(AbstractCrawler):
                     f"[KuaishouCrawler.get_video_info_task] have not fund video detail video_id:{video_id}, err: {ex}"
                 )
                 return None
+
+    async def get_video_info_with_platform_runner(self, video_id: str) -> Optional[Dict]:
+        try:
+            result = await self.platform_runner.run_detail(video_id=video_id)
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[KuaishouCrawler.get_video_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}"
+            )
+            return result.get("video")
+        except KuaishouDataFetchError as ex:
+            utils.logger.error(f"[KuaishouCrawler.get_video_info_with_platform_runner] Get video detail error: {ex}")
+            return None
 
     async def batch_get_video_comments(self, video_id_list: List[str]):
         """
@@ -266,6 +364,9 @@ class KuaishouCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
+                if self._use_platform_runner_for("comments"):
+                    await self.get_comments_with_platform_runner(video_id)
+                    return
                 utils.logger.info(
                     f"[KuaishouCrawler.get_comments] begin get video_id: {video_id} comments ..."
                 )
@@ -298,6 +399,27 @@ class KuaishouCrawler(AbstractCrawler):
                 await self.ks_client.update_cookies(
                     browser_context=self.browser_context
                 )
+
+    async def get_comments_with_platform_runner(self, video_id: str):
+        try:
+            utils.logger.info(
+                f"[KuaishouCrawler.get_comments_with_platform_runner] begin get video_id: {video_id} comments ..."
+            )
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[KuaishouCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for video {video_id}"
+            )
+            result = await self.platform_runner.run_comments(
+                video_id=video_id,
+                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            )
+            comments = result.get("comments", [])
+            if comments:
+                await kuaishou_store.batch_update_ks_video_comments(video_id, comments)
+        except KuaishouDataFetchError as ex:
+            utils.logger.error(
+                f"[KuaishouCrawler.get_comments_with_platform_runner] get video_id: {video_id} comment error: {ex}"
+            )
 
     async def create_ks_client(self, httpx_proxy: Optional[str]) -> KuaiShouClient:
         """Create ks client"""
@@ -391,6 +513,9 @@ class KuaishouCrawler(AbstractCrawler):
 
     async def get_creators_and_videos(self) -> None:
         """Get creator's videos and retrieve their comment information."""
+        if self._use_platform_runner_for("creator"):
+            await self.get_creators_and_videos_with_platform_runner()
+            return
         utils.logger.info(
             "[KuaiShouCrawler.get_creators_and_videos] Begin get kuaishou creators"
         )
@@ -420,6 +545,49 @@ class KuaishouCrawler(AbstractCrawler):
                 video_item.get("photo", {}).get("id") for video_item in all_video_list
             ]
             await self.batch_get_video_comments(video_ids)
+
+    async def get_creators_and_videos_with_platform_runner(self) -> None:
+        """Get creator videos through the new Kuaishou platform runner."""
+        utils.logger.info("[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Begin get kuaishou creators")
+        for creator_url in config.KS_CREATOR_ID_LIST:
+            try:
+                creator_info: CreatorUrlInfo = parse_creator_info_from_url(creator_url)
+                user_id = creator_info.user_id
+                creator_result = await self.platform_runner.run_creator(creator_id=user_id)
+                creator_payload = creator_result.get("creator", {})
+                if creator_payload:
+                    await kuaishou_store.save_creator(user_id, creator=creator_payload)
+            except (ValueError, KuaishouDataFetchError) as e:
+                utils.logger.error(f"[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator: {e}")
+                continue
+
+            next_cursor = ""
+            all_video_ids: List[str] = []
+            while True:
+                try:
+                    result = await self.platform_runner.run_creator_contents(
+                        creator_id=user_id,
+                        cursor=next_cursor,
+                    )
+                except KuaishouDataFetchError as e:
+                    utils.logger.error(
+                        f"[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator contents: {e}"
+                    )
+                    break
+                video_items = result.get("items", [])
+                if not video_items:
+                    break
+                for video_detail in video_items:
+                    photo_id = video_detail.get("photo", {}).get("id")
+                    if photo_id:
+                        all_video_ids.append(photo_id)
+                    await kuaishou_store.update_kuaishou_video(video_item=video_detail)
+                if not result.get("has_more"):
+                    break
+                next_cursor = str(result.get("next_cursor") or "")
+                if not next_cursor:
+                    break
+            await self.batch_get_video_comments(all_video_ids)
 
     async def fetch_creator_video_detail(self, video_list: List[Dict]):
         """
