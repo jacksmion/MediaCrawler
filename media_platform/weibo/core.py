@@ -37,7 +37,13 @@ from playwright.async_api import (
 )
 
 import config
+from application.services.crawl_state_service import CrawlStateService
+from application.services.event_service import EventService
+from application.services.normalized_content_service import NormalizedContentService
+from application.services.raw_record_service import RawRecordService
+from application.services.weibo_platform_runner import WeiboPlatformRunner
 from base.base_crawler import AbstractCrawler
+from connectors.weibo.errors import WeiboDataFetchError
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import weibo as weibo_store
 from tools import utils
@@ -64,6 +70,36 @@ class WeiboCrawler(AbstractCrawler):
         self.mobile_user_agent = utils.get_mobile_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self._platform_http_proxy: Optional[str] = None
+        self.crawl_state_service = CrawlStateService()
+        self.event_service = EventService()
+        self.normalized_content_service = NormalizedContentService()
+        self.raw_record_service = RawRecordService()
+        self.platform_runner = WeiboPlatformRunner(
+            self,
+            crawl_state_service=self.crawl_state_service,
+            event_service=self.event_service,
+            normalized_content_service=self.normalized_content_service,
+            raw_record_service=self.raw_record_service,
+        )
+
+    @staticmethod
+    def _weibo_platform_runner_mode() -> str:
+        return str(getattr(config, "WEIBO_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
+
+    def _use_platform_runner_for(self, capability: str) -> bool:
+        mode = self._weibo_platform_runner_mode()
+        if mode == "all":
+            return True
+        if mode == capability:
+            return True
+        toggle_map = {
+            "search": getattr(config, "ENABLE_WEIBO_CONNECTOR_SEARCH", False),
+            "detail": getattr(config, "ENABLE_WEIBO_CONNECTOR_DETAIL", False),
+            "comments": getattr(config, "ENABLE_WEIBO_CONNECTOR_COMMENTS", False),
+            "creator": getattr(config, "ENABLE_WEIBO_CONNECTOR_CREATOR", False),
+        }
+        return bool(toggle_map.get(capability, False))
 
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -71,6 +107,7 @@ class WeiboCrawler(AbstractCrawler):
             self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
             ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
 
         async with async_playwright() as playwright:
             # Select launch mode based on configuration
@@ -138,6 +175,9 @@ class WeiboCrawler(AbstractCrawler):
         search weibo note with keywords
         :return:
         """
+        if self._use_platform_runner_for("search"):
+            await self.search_with_platform_connector()
+            return
         utils.logger.info("[WeiboCrawler.search] Begin search weibo keywords")
         weibo_limit_count = 10  # weibo limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
@@ -188,6 +228,59 @@ class WeiboCrawler(AbstractCrawler):
 
                 await self.batch_get_notes_comments(note_id_list)
 
+    async def search_with_platform_connector(self):
+        """Search Weibo through the new platform runner while keeping legacy storage flow."""
+        utils.logger.info("[WeiboCrawler.search_with_platform_connector] Begin search weibo keywords via platform runner")
+        weibo_limit_count = 10
+        if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
+            config.CRAWLER_MAX_NOTES_COUNT = weibo_limit_count
+        start_page = config.START_PAGE
+        search_type = SearchType.DEFAULT
+        if config.WEIBO_SEARCH_TYPE == "real_time":
+            search_type = SearchType.REAL_TIME
+        elif config.WEIBO_SEARCH_TYPE == "popular":
+            search_type = SearchType.POPULAR
+        elif config.WEIBO_SEARCH_TYPE == "video":
+            search_type = SearchType.VIDEO
+        for keyword in config.KEYWORDS.split(","):
+            source_keyword_var.set(keyword)
+            utils.logger.info(f"[WeiboCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            page = 1
+            while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+                if page < start_page:
+                    utils.logger.info(f"[WeiboCrawler.search_with_platform_connector] Skip page: {page}")
+                    page += 1
+                    continue
+                try:
+                    result = await self.platform_runner.run_search_page(
+                        keyword=keyword,
+                        page=page,
+                        search_type=search_type.value,
+                    )
+                except WeiboDataFetchError as exc:
+                    utils.logger.error(
+                        f"[WeiboCrawler.search_with_platform_connector] search weibo keyword: {keyword}, page: {page} failed, err: {exc}"
+                    )
+                    break
+                note_list = result.get("items", [])
+                note_id_list: List[str] = []
+                note_list = await self.batch_get_notes_full_text(note_list)
+                for note_item in note_list:
+                    if note_item:
+                        mblog: Dict = note_item.get("mblog", {})
+                        if mblog:
+                            note_id = mblog.get("id")
+                            if note_id:
+                                note_id_list.append(note_id)
+                            await weibo_store.update_weibo_note(note_item)
+                            await self.get_note_images(mblog)
+                page += 1
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(
+                    f"[WeiboCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                )
+                await self.batch_get_notes_comments(note_id_list)
+
     async def get_specified_notes(self):
         """
         get specified notes info
@@ -210,6 +303,8 @@ class WeiboCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
+                if self._use_platform_runner_for("detail"):
+                    return await self.get_note_info_with_platform_runner(note_id)
                 result = await self.wb_client.get_note_info_by_id(note_id)
 
                 # Sleep after fetching note details
@@ -223,6 +318,19 @@ class WeiboCrawler(AbstractCrawler):
             except KeyError as ex:
                 utils.logger.error(f"[WeiboCrawler.get_note_info_task] have not fund note detail note_id:{note_id}, err: {ex}")
                 return None
+
+    async def get_note_info_with_platform_runner(self, note_id: str) -> Optional[Dict]:
+        """Get note detail through the new platform runner."""
+        try:
+            result = await self.platform_runner.run_detail(note_id=note_id)
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[WeiboCrawler.get_note_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
+            )
+            return result.get("note")
+        except WeiboDataFetchError as ex:
+            utils.logger.error(f"[WeiboCrawler.get_note_info_with_platform_runner] Get note detail error: {ex}")
+            return None
 
     async def batch_get_notes_comments(self, note_id_list: List[str]):
         """
@@ -251,6 +359,9 @@ class WeiboCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
+                if self._use_platform_runner_for("comments"):
+                    await self.get_note_comments_with_platform_runner(note_id)
+                    return
                 utils.logger.info(f"[WeiboCrawler.get_note_comments] begin get note_id: {note_id} comments ...")
 
                 # Sleep before fetching comments
@@ -267,6 +378,24 @@ class WeiboCrawler(AbstractCrawler):
                 utils.logger.error(f"[WeiboCrawler.get_note_comments] get note_id: {note_id} comment error: {ex}")
             except Exception as e:
                 utils.logger.error(f"[WeiboCrawler.get_note_comments] may be been blocked, err:{e}")
+
+    async def get_note_comments_with_platform_runner(self, note_id: str):
+        """Get Weibo comments through the new platform runner and keep legacy storage."""
+        try:
+            utils.logger.info(f"[WeiboCrawler.get_note_comments_with_platform_runner] begin get note_id: {note_id} comments ...")
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[WeiboCrawler.get_note_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_id}"
+            )
+            result = await self.platform_runner.run_comments(
+                note_id=note_id,
+                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            )
+            comments = result.get("comments", [])
+            if comments:
+                await weibo_store.batch_update_weibo_note_comments(note_id, comments)
+        except WeiboDataFetchError as ex:
+            utils.logger.error(f"[WeiboCrawler.get_note_comments_with_platform_runner] get note_id: {note_id} comment error: {ex}")
 
     async def get_note_images(self, mblog: Dict):
         """
@@ -305,6 +434,9 @@ class WeiboCrawler(AbstractCrawler):
         Returns:
 
         """
+        if self._use_platform_runner_for("creator"):
+            await self.get_creators_and_notes_with_platform_runner()
+            return
         utils.logger.info("[WeiboCrawler.get_creators_and_notes] Begin get weibo creators")
         for user_id in config.WEIBO_CREATOR_ID_LIST:
             createor_info_res: Dict = await self.wb_client.get_creator_info_by_id(creator_id=user_id)
@@ -334,6 +466,47 @@ class WeiboCrawler(AbstractCrawler):
 
             else:
                 utils.logger.error(f"[WeiboCrawler.get_creators_and_notes] get creator info error, creator_id:{user_id}")
+
+    async def get_creators_and_notes_with_platform_runner(self) -> None:
+        """Fetch creator info and notes through the new Weibo platform runner."""
+        utils.logger.info("[WeiboCrawler.get_creators_and_notes_with_platform_runner] Begin get weibo creators")
+        for user_id in config.WEIBO_CREATOR_ID_LIST:
+            try:
+                creator_result = await self.platform_runner.run_creator(creator_id=user_id)
+            except WeiboDataFetchError as exc:
+                utils.logger.error(
+                    f"[WeiboCrawler.get_creators_and_notes_with_platform_runner] get creator info error, creator_id:{user_id}, err:{exc}"
+                )
+                continue
+            creator_info = creator_result.get("creator", {})
+            if creator_info:
+                await weibo_store.save_creator(user_id, user_info=creator_info)
+            cursor = ""
+            all_notes: List[Dict] = []
+            while True:
+                try:
+                    contents_result = await self.platform_runner.run_creator_contents(
+                        creator_id=user_id,
+                        cursor=cursor,
+                    )
+                except WeiboDataFetchError as exc:
+                    utils.logger.error(
+                        f"[WeiboCrawler.get_creators_and_notes_with_platform_runner] get creator notes error, creator_id:{user_id}, err:{exc}"
+                    )
+                    break
+                note_list = contents_result.get("items", [])
+                if not note_list:
+                    break
+                updated_note_list = await self.batch_get_notes_full_text(note_list)
+                await weibo_store.batch_update_weibo_notes(updated_note_list)
+                all_notes.extend(updated_note_list)
+                if not contents_result.get("has_more"):
+                    break
+                cursor = str(contents_result.get("next_cursor") or "")
+                if not cursor:
+                    break
+            note_ids = [note_item.get("mblog", {}).get("id") for note_item in all_notes if note_item.get("mblog", {}).get("id")]
+            await self.batch_get_notes_comments(note_ids)
 
     async def create_weibo_client(self, httpx_proxy: Optional[str]) -> WeiboClient:
         """Create xhs client"""
