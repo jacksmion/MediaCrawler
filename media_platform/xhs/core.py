@@ -33,7 +33,13 @@ from playwright.async_api import (
 from tenacity import RetryError
 
 import config
+from application.services.crawl_state_service import CrawlStateService
+from application.services.event_service import EventService
+from application.services.normalized_content_service import NormalizedContentService
+from application.services.raw_record_service import RawRecordService
+from application.services.xhs_platform_runner import XhsPlatformRunner
 from base.base_crawler import AbstractCrawler
+from connectors.xhs.errors import XhsDataFetchError
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
@@ -60,6 +66,36 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self._platform_http_proxy: Optional[str] = None
+        self.crawl_state_service = CrawlStateService()
+        self.event_service = EventService()
+        self.normalized_content_service = NormalizedContentService()
+        self.raw_record_service = RawRecordService()
+        self.platform_runner = XhsPlatformRunner(
+            self,
+            crawl_state_service=self.crawl_state_service,
+            event_service=self.event_service,
+            normalized_content_service=self.normalized_content_service,
+            raw_record_service=self.raw_record_service,
+        )
+
+    @staticmethod
+    def _xhs_platform_runner_mode() -> str:
+        return str(getattr(config, "XHS_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
+
+    def _use_platform_runner_for(self, capability: str) -> bool:
+        mode = self._xhs_platform_runner_mode()
+        if mode == "all":
+            return True
+        if mode == capability:
+            return True
+        toggle_map = {
+            "search": getattr(config, "ENABLE_XHS_CONNECTOR_SEARCH", False),
+            "detail": getattr(config, "ENABLE_XHS_CONNECTOR_DETAIL", False),
+            "comments": getattr(config, "ENABLE_XHS_CONNECTOR_COMMENTS", False),
+            "creator": getattr(config, "ENABLE_XHS_CONNECTOR_CREATOR", False),
+        }
+        return bool(toggle_map.get(capability, False))
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -67,6 +103,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
             ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
 
         async with async_playwright() as playwright:
             # Choose launch mode based on configuration
@@ -128,6 +165,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
+        if self._use_platform_runner_for("search"):
+            await self.search_with_platform_runner()
+            return
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
         xhs_limit_count = 20  # Xiaohongshu limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
@@ -187,6 +227,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def get_creators_and_notes(self) -> None:
         """Get creator's notes and retrieve their comment information."""
+        if self._use_platform_runner_for("creator"):
+            await self.get_creators_and_notes_with_platform_runner()
+            return
         utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes] Begin get Xiaohongshu creators")
         for creator_url in config.XHS_CREATOR_ID_LIST:
             try:
@@ -255,6 +298,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
         Note: Must specify note_id, xsec_source, xsec_token
         """
+        if self._use_platform_runner_for("detail"):
+            await self.get_specified_notes_with_platform_runner()
+            return
         get_note_detail_task_list = []
         for full_note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
             note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
@@ -307,6 +353,12 @@ class XiaoHongShuCrawler(AbstractCrawler):
         utils.logger.info(f"[get_note_detail_async_task] Begin get note detail, note_id: {note_id}")
         async with semaphore:
             try:
+                if self._use_platform_runner_for("detail"):
+                    note_detail = await self.get_note_detail_with_platform_runner(note_id, xsec_source, xsec_token)
+                    if note_detail:
+                        await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                        utils.logger.info(f"[get_note_detail_async_task] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note {note_id}")
+                    return note_detail
                 try:
                     note_detail = await self.xhs_client.get_note_by_id(note_id, xsec_source, xsec_token)
                 except RetryError:
@@ -356,6 +408,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
     async def get_comments(self, note_id: str, xsec_token: str, semaphore: asyncio.Semaphore):
         """Get note comments with keyword filtering and quantity limitation"""
         async with semaphore:
+            if self._use_platform_runner_for("comments"):
+                await self.get_comments_with_platform_runner(note_id, xsec_token)
+                return
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Begin get note id comments {note_id}")
             # Use fixed crawling interval
             crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
@@ -370,6 +425,160 @@ class XiaoHongShuCrawler(AbstractCrawler):
             # Sleep after fetching comments
             await asyncio.sleep(crawl_interval)
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for note {note_id}")
+
+    async def search_with_platform_runner(self) -> None:
+        """Search Xiaohongshu through the new platform runner."""
+        utils.logger.info("[XiaoHongShuCrawler.search_with_platform_runner] Begin search Xiaohongshu keywords")
+        xhs_limit_count = 20
+        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
+            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
+        start_page = config.START_PAGE
+        for keyword in config.KEYWORDS.split(","):
+            source_keyword_var.set(keyword)
+            page = 1
+            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+                if page < start_page:
+                    page += 1
+                    continue
+                try:
+                    result = await self.platform_runner.run_search_page(
+                        keyword=keyword,
+                        page=page,
+                        sort_type=config.SORT_TYPE or SearchSortType.GENERAL.value,
+                    )
+                except XhsDataFetchError as exc:
+                    utils.logger.error(f"[XiaoHongShuCrawler.search_with_platform_runner] search error: {exc}")
+                    break
+                note_details = result.get("items", [])
+                if not note_details:
+                    break
+                note_ids: List[str] = []
+                xsec_tokens: List[str] = []
+                for note_detail in note_details:
+                    await xhs_store.update_xhs_note(note_detail)
+                    await self.get_notice_media(note_detail)
+                    note_ids.append(note_detail.get("note_id"))
+                    xsec_tokens.append(note_detail.get("xsec_token"))
+                await self.batch_get_note_comments(note_ids, xsec_tokens)
+                if not result.get("has_more"):
+                    break
+                page += 1
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+
+    async def get_specified_notes_with_platform_runner(self) -> None:
+        """Fetch specified notes through the new XHS platform runner."""
+        note_ids: List[str] = []
+        xsec_tokens: List[str] = []
+        for full_note_url in config.XHS_SPECIFIED_NOTE_URL_LIST:
+            note_url_info: NoteUrlInfo = parse_note_info_from_note_url(full_note_url)
+            note_detail = await self.get_note_detail_with_platform_runner(
+                note_url_info.note_id,
+                note_url_info.xsec_source,
+                note_url_info.xsec_token,
+            )
+            if not note_detail:
+                continue
+            if config.KEYWORDS:
+                content = (note_detail.get("title") or "") + (note_detail.get("desc") or "")
+                if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                    utils.logger.info(
+                        f"[XiaoHongShuCrawler.get_specified_notes_with_platform_runner] Skip note {note_detail.get('note_id')} due to keyword mismatch"
+                    )
+                    continue
+            note_ids.append(note_detail.get("note_id", ""))
+            xsec_tokens.append(note_detail.get("xsec_token", ""))
+            await xhs_store.update_xhs_note(note_detail)
+            await self.get_notice_media(note_detail)
+        await self.batch_get_note_comments(note_ids, xsec_tokens)
+
+    async def get_note_detail_with_platform_runner(self, note_id: str, xsec_source: str, xsec_token: str) -> Optional[Dict]:
+        """Get note detail through the new XHS platform runner."""
+        try:
+            result = await self.platform_runner.run_detail(
+                note_id=note_id,
+                xsec_source=xsec_source,
+                xsec_token=xsec_token,
+            )
+            return result.get("note")
+        except XhsDataFetchError as exc:
+            utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_with_platform_runner] Get note detail error: {exc}")
+            return None
+
+    async def get_comments_with_platform_runner(self, note_id: str, xsec_token: str) -> None:
+        """Get Xiaohongshu comments through the new platform runner."""
+        try:
+            utils.logger.info(f"[XiaoHongShuCrawler.get_comments_with_platform_runner] Begin get note comments {note_id}")
+            result = await self.platform_runner.run_comments(
+                note_id=note_id,
+                xsec_token=xsec_token,
+                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            )
+            comments = result.get("comments", [])
+            if comments:
+                await xhs_store.batch_update_xhs_note_comments(note_id, comments)
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[XiaoHongShuCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for note {note_id}"
+            )
+        except XhsDataFetchError as exc:
+            utils.logger.error(f"[XiaoHongShuCrawler.get_comments_with_platform_runner] get note_id: {note_id} comment error: {exc}")
+
+    async def get_creators_and_notes_with_platform_runner(self) -> None:
+        """Fetch creator info and notes through the new XHS platform runner."""
+        utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] Begin get Xiaohongshu creators")
+        for creator_url in config.XHS_CREATOR_ID_LIST:
+            try:
+                parsed_creator = parse_creator_info_from_url(creator_url)
+                creator_result = await self.platform_runner.run_creator(creator_url=creator_url)
+            except ValueError as exc:
+                utils.logger.error(
+                    f"[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] parse creator URL failed, creator_url:{creator_url}, err:{exc}"
+                )
+                continue
+            except XhsDataFetchError as exc:
+                utils.logger.error(
+                    f"[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] get creator info error, creator_url:{creator_url}, err:{exc}"
+                )
+                continue
+            creator_info = creator_result.get("creator", {})
+            if creator_info:
+                await xhs_store.save_creator(parsed_creator.user_id, creator=creator_info)
+            cursor = ""
+            all_notes: List[Dict] = []
+            while True:
+                try:
+                    contents_result = await self.platform_runner.run_creator_contents(
+                        creator_url=creator_url,
+                        cursor=cursor,
+                        limit=min(30, config.CRAWLER_MAX_NOTES_COUNT),
+                    )
+                except XhsDataFetchError as exc:
+                    utils.logger.error(
+                        f"[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] get creator notes error, creator_url:{creator_url}, err:{exc}"
+                    )
+                    break
+                note_list = contents_result.get("items", [])
+                if not note_list:
+                    break
+                for note_detail in note_list:
+                    if config.KEYWORDS:
+                        content = (note_detail.get("title") or "") + (note_detail.get("desc") or "")
+                        if not any(keyword.strip() in content for keyword in config.KEYWORDS.split(",") if keyword.strip()):
+                            utils.logger.info(
+                                f"[XiaoHongShuCrawler.get_creators_and_notes_with_platform_runner] Skip note {note_detail.get('note_id')} due to keyword mismatch"
+                            )
+                            continue
+                    await xhs_store.update_xhs_note(note_detail)
+                    await self.get_notice_media(note_detail)
+                    all_notes.append(note_detail)
+                if not contents_result.get("has_more"):
+                    break
+                cursor = str(contents_result.get("next_cursor") or "")
+                if not cursor:
+                    break
+            note_ids = [note_item.get("note_id") for note_item in all_notes if note_item.get("note_id")]
+            xsec_tokens = [note_item.get("xsec_token") for note_item in all_notes if note_item.get("note_id")]
+            await self.batch_get_note_comments(note_ids, xsec_tokens)
 
     async def create_xhs_client(self, httpx_proxy: Optional[str]) -> XiaoHongShuClient:
         """Create Xiaohongshu client"""

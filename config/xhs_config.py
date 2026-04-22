@@ -35,3 +35,10 @@ XHS_CREATOR_ID_LIST = [
     "https://www.xiaohongshu.com/user/profile/5f58bd990000000001003753?xsec_token=ABYVg1evluJZZzpMX-VWzchxQ1qSNVW3r-jOEnKqMcgZw=&xsec_source=pc_search"
     # ........................
 ]
+
+# Incremental migrated runner switches.
+XHS_PLATFORM_RUNNER_MODE = "legacy"
+ENABLE_XHS_CONNECTOR_SEARCH = False
+ENABLE_XHS_CONNECTOR_DETAIL = False
+ENABLE_XHS_CONNECTOR_COMMENTS = False
+ENABLE_XHS_CONNECTOR_CREATOR = False

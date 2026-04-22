@@ -13,6 +13,7 @@ from .platform_task_service import PlatformTaskService
 from .raw_record_service import RawRecordService
 from .tieba_platform_runner import TiebaPlatformRunner
 from .weibo_platform_runner import WeiboPlatformRunner
+from .xhs_platform_runner import XhsPlatformRunner
 from .zhihu_platform_runner import ZhihuPlatformRunner
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     "RawRecordService",
     "TiebaPlatformRunner",
     "WeiboPlatformRunner",
+    "XhsPlatformRunner",
     "ZhihuPlatformRunner",
 ]
