@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
+from schemas.tasks.platform_mappings import PLATFORM_SEARCH_PAGE_HINTS
 from ..schemas import CrawlerTypeEnum, PlatformEnum, ResolvedCrawlerConfig
 from .crawler_command_builder import CrawlerCommandBuilder
 
@@ -53,42 +55,17 @@ class CrawlerExecutionPlanner:
 
     @staticmethod
     def _build_platform_requirement_command(config: ResolvedCrawlerConfig) -> list[str]:
+        payload = config.model_dump(mode="json")
+        payload["max_pages"] = 1
+        if config.comment_time_filter_h > 0:
+            payload["comment_limit"] = 50
+
         cmd = [
             "uv",
             "run",
             "python",
             "run_platform_requirement.py",
-            "--platform",
-            config.platform.value,
-            "--mode",
-            config.crawler_type.value,
-            "--login-type",
-            config.login_type.value,
-            "--save-option",
-            config.save_option.value,
-            "--headless",
-            "true" if config.headless else "false",
+            "--request-json",
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         ]
-
-        if config.cookies:
-            cmd.extend(["--cookies", config.cookies])
-
-        if config.crawler_type == CrawlerTypeEnum.SEARCH:
-            for keyword in [item.strip() for item in config.keywords.split(",") if item.strip()]:
-                cmd.extend(["--keyword", keyword])
-            cmd.extend(["--start-page", str(config.start_page)])
-            cmd.extend(["--max-pages", "1"])
-            if config.sort_type:
-                cmd.extend(["--sort-type", str(config.sort_type)])
-        elif config.crawler_type == CrawlerTypeEnum.DETAIL:
-            for specified_id in [item.strip() for item in config.specified_ids.split(",") if item.strip()]:
-                cmd.extend(["--specified-id", specified_id])
-        elif config.crawler_type == CrawlerTypeEnum.CREATOR:
-            for creator_id in [item.strip() for item in config.creator_ids.split(",") if item.strip()]:
-                cmd.extend(["--creator-id", creator_id])
-
-        if config.enable_comments:
-            cmd.append("--include-comments")
-        if config.comment_time_filter_h > 0:
-            cmd.extend(["--comment-limit", "50"])
         return cmd

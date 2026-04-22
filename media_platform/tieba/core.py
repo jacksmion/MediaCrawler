@@ -52,6 +52,7 @@ from .field import SearchNoteType, SearchSortType
 from .help import TieBaExtractor
 from .login import BaiduTieBaLogin
 from schemas.tasks.models import CrawlTask
+from schemas.tasks.requirements import TiebaCrawlRequirement
 
 
 class TieBaCrawler(AbstractCrawler):
@@ -81,6 +82,9 @@ class TieBaCrawler(AbstractCrawler):
     async def execute_platform_task(self, task: CrawlTask) -> dict:
         return await self.task_executor.execute(task)
 
+    async def execute_platform_requirement(self, requirement: TiebaCrawlRequirement) -> dict[str, object]:
+        return await self.task_executor.execute_requirement(requirement)
+
     def _new_platform_task(self, *, task_type: str, params: Dict) -> CrawlTask:
         return CrawlTask(
             task_id=f"tb-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
@@ -89,6 +93,54 @@ class TieBaCrawler(AbstractCrawler):
             status="planned",
             params=params,
         )
+
+    async def start_with_requirement(self, requirement: TiebaCrawlRequirement) -> dict[str, object]:
+        playwright_proxy_format, httpx_proxy_format = None, None
+        ip_proxy_pool = None
+        if config.ENABLE_IP_PROXY:
+            utils.logger.info("[BaiduTieBaCrawler.start] Begin create ip proxy pool ...")
+            ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
+            ip_proxy_info: IpInfoModel = await ip_proxy_pool.get_proxy()
+            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+            utils.logger.info(f"[BaiduTieBaCrawler.start] Init default ip proxy, value: {httpx_proxy_format}")
+        self._platform_http_proxy = httpx_proxy_format
+
+        async with async_playwright() as playwright:
+            if config.ENABLE_CDP_MODE:
+                utils.logger.info("[BaiduTieBaCrawler] Launching browser in CDP mode")
+                self.browser_context = await self.launch_browser_with_cdp(
+                    playwright,
+                    playwright_proxy_format,
+                    self.user_agent,
+                    headless=config.CDP_HEADLESS,
+                )
+            else:
+                utils.logger.info("[BaiduTieBaCrawler] Launching browser in standard mode")
+                chromium = playwright.chromium
+                self.browser_context = await self.launch_browser(
+                    chromium,
+                    playwright_proxy_format,
+                    self.user_agent,
+                    headless=config.HEADLESS,
+                )
+            await self._inject_anti_detection_scripts()
+            self.context_page = await self.browser_context.new_page()
+            await self._navigate_to_tieba_via_baidu()
+            self.tieba_client = await self.create_tieba_client(
+                httpx_proxy_format,
+                ip_proxy_pool if config.ENABLE_IP_PROXY else None,
+            )
+            if not await self.tieba_client.pong(browser_context=self.browser_context):
+                login_obj = BaiduTieBaLogin(
+                    login_type=config.LOGIN_TYPE,
+                    login_phone="",
+                    browser_context=self.browser_context,
+                    context_page=self.context_page,
+                    cookie_str=config.COOKIES,
+                )
+                await login_obj.begin()
+                await self.tieba_client.update_cookies(browser_context=self.browser_context)
+            return await self.execute_platform_requirement(requirement)
 
     @staticmethod
     def _tieba_task_executor_mode() -> str:

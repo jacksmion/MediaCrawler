@@ -6,6 +6,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from schemas.tasks.platform_mappings import (
+    PLATFORM_CREATOR_LIST_ATTR,
+    PLATFORM_DETAIL_LIST_ATTR,
+    PLATFORM_SEARCH_SORT_ATTR,
+)
+
 from ..schemas import CrawlerStartRequest, ResolvedCrawlerConfig
 from .runtime_config_service import RuntimeConfigService
 
@@ -18,15 +24,12 @@ class CrawlerConfigResolver:
         "login_type": "LOGIN_TYPE",
         "crawler_type": "CRAWLER_TYPE",
         "keywords": "KEYWORDS",
-        "specified_ids": "DY_SPECIFIED_ID_LIST",
-        "creator_ids": "DY_CREATOR_ID_LIST",
         "start_page": "START_PAGE",
         "enable_comments": "ENABLE_GET_COMMENTS",
         "enable_sub_comments": "ENABLE_GET_SUB_COMMENTS",
         "save_option": "SAVE_DATA_OPTION",
         "cookies": "COOKIES",
         "headless": "HEADLESS",
-        "sort_type": "SEARCH_SORT_TYPE",
         "comment_time_filter_h": "COMMENT_TIME_FILTER_H",
     }
 
@@ -53,8 +56,38 @@ class CrawlerConfigResolver:
             if config_key in config_payload["overrides"]:
                 applied_override_keys.append(config_key)
 
+        platform_code = resolved_data["platform"]
+        if hasattr(platform_code, "value"):
+            platform_code = platform_code.value
+
+        for field_name, config_key in self._platform_config_keys(str(platform_code)).items():
+            if field_name in explicit_fields:
+                continue
+            if config_key not in merged_config:
+                continue
+            override_value = self._adapt_value(field_name, merged_config[config_key])
+            if override_value is None:
+                continue
+            resolved_data[field_name] = override_value
+            if config_key in config_payload["overrides"]:
+                applied_override_keys.append(config_key)
+
         resolved_data["runtime_override_keys"] = sorted(set(applied_override_keys))
         return ResolvedCrawlerConfig(**resolved_data)
+
+    @staticmethod
+    def _platform_config_keys(platform: str) -> dict[str, str]:
+        keys: dict[str, str] = {}
+        detail_key = PLATFORM_DETAIL_LIST_ATTR.get(platform)
+        if detail_key:
+            keys["specified_ids"] = detail_key
+        creator_key = PLATFORM_CREATOR_LIST_ATTR.get(platform)
+        if creator_key:
+            keys["creator_ids"] = creator_key
+        sort_key = PLATFORM_SEARCH_SORT_ATTR.get(platform)
+        if sort_key:
+            keys["sort_type"] = sort_key
+        return keys
 
     @staticmethod
     def _adapt_value(field_name: str, value: Any) -> Any:

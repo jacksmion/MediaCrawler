@@ -167,11 +167,3 @@ class BaseTaskExecutor(ABC):
     @abstractmethod
     def _build_comments_task(self, target: Any, index: int, comment_limit: int | None) -> CrawlTask:
         raise NotImplementedError
-
-
-class UnsupportedRequirementPlanner:
-    def __init__(self, platform_code: str) -> None:
-        self.platform_code = platform_code
-
-    def plan(self, requirement: Any) -> list[CrawlTask]:
-        raise NotImplementedError(f"Requirement planning is not supported for platform: {self.platform_code}")

@@ -60,6 +60,7 @@ from .field import SearchOrderType
 from .help import parse_video_info_from_url, parse_creator_info_from_url
 from .login import BilibiliLogin
 from schemas.tasks.models import CrawlTask
+from schemas.tasks.requirements import BilibiliCrawlRequirement
 
 
 class BilibiliCrawler(AbstractCrawler):
@@ -89,6 +90,9 @@ class BilibiliCrawler(AbstractCrawler):
     async def execute_platform_task(self, task: CrawlTask) -> dict:
         return await self.task_executor.execute(task)
 
+    async def execute_platform_requirement(self, requirement: BilibiliCrawlRequirement) -> dict[str, object]:
+        return await self.task_executor.execute_requirement(requirement)
+
     def _new_platform_task(self, *, task_type: str, params: Dict) -> CrawlTask:
         return CrawlTask(
             task_id=f"bili-runtime-{task_type}-{uuid.uuid4().hex[:12]}",
@@ -97,6 +101,44 @@ class BilibiliCrawler(AbstractCrawler):
             status="planned",
             params=params,
         )
+
+    async def start_with_requirement(self, requirement: BilibiliCrawlRequirement) -> dict[str, object]:
+        playwright_proxy_format, httpx_proxy_format = None, None
+        if config.ENABLE_IP_PROXY:
+            self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
+            ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
+            playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
+
+        async with async_playwright() as playwright:
+            if config.ENABLE_CDP_MODE:
+                utils.logger.info("[BilibiliCrawler] Launching browser using CDP mode")
+                self.browser_context = await self.launch_browser_with_cdp(
+                    playwright,
+                    playwright_proxy_format,
+                    self.user_agent,
+                    headless=config.CDP_HEADLESS,
+                )
+            else:
+                utils.logger.info("[BilibiliCrawler] Launching browser using standard mode")
+                chromium = playwright.chromium
+                self.browser_context = await self.launch_browser(chromium, None, self.user_agent, headless=config.HEADLESS)
+                await self.browser_context.add_init_script(path="libs/stealth.min.js")
+
+            self.context_page = await self.browser_context.new_page()
+            await self.context_page.goto(self.index_url)
+            self.bili_client = await self.create_bilibili_client(httpx_proxy_format)
+            if not await self.bili_client.pong():
+                login_obj = BilibiliLogin(
+                    login_type=config.LOGIN_TYPE,
+                    login_phone="",
+                    browser_context=self.browser_context,
+                    context_page=self.context_page,
+                    cookie_str=config.COOKIES,
+                )
+                await login_obj.begin()
+                await self.bili_client.update_cookies(browser_context=self.browser_context)
+            return await self.execute_platform_requirement(requirement)
 
     @staticmethod
     def _bilibili_task_executor_mode() -> str:

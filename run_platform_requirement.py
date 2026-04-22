@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+from dataclasses import asdict
 import json
 import sys
 from typing import Any
@@ -20,56 +21,32 @@ import asyncio
 import config
 from database import db
 from main import CrawlerFactory
+from schemas.tasks.platform_mappings import (
+    PLATFORM_CREATOR_LIST_ATTR,
+    PLATFORM_DETAIL_LIST_ATTR,
+    PLATFORM_RUNNER_MODE_ATTR,
+    PLATFORM_SEARCH_PAGE_HINTS,
+)
+from schemas.tasks.requirements import (
+    BilibiliCrawlRequirement,
+    DouyinCrawlRequirement,
+    KuaishouCrawlRequirement,
+    TiebaCrawlRequirement,
+    WeiboCrawlRequirement,
+    XhsCrawlRequirement,
+    ZhihuCrawlRequirement,
+)
 from tools.app_runner import run
 
 
 crawler = None
 
-PLATFORM_RUNNER_MODE_ATTR = {
-    "xhs": "XHS_PLATFORM_RUNNER_MODE",
-    "dy": "DOUYIN_PLATFORM_RUNNER_MODE",
-    "ks": "KUAISHOU_PLATFORM_RUNNER_MODE",
-    "bili": "BILIBILI_PLATFORM_RUNNER_MODE",
-    "wb": "WEIBO_PLATFORM_RUNNER_MODE",
-    "tieba": "TIEBA_PLATFORM_RUNNER_MODE",
-    "zhihu": "ZHIHU_PLATFORM_RUNNER_MODE",
-}
-
-DETAIL_LIST_ATTR = {
-    "xhs": "XHS_SPECIFIED_NOTE_URL_LIST",
-    "dy": "DY_SPECIFIED_ID_LIST",
-    "ks": "KS_SPECIFIED_ID_LIST",
-    "bili": "BILI_SPECIFIED_ID_LIST",
-    "wb": "WEIBO_SPECIFIED_ID_LIST",
-    "tieba": "TIEBA_SPECIFIED_ID_LIST",
-    "zhihu": "ZHIHU_SPECIFIED_ID_LIST",
-}
-
-CREATOR_LIST_ATTR = {
-    "xhs": "XHS_CREATOR_ID_LIST",
-    "dy": "DY_CREATOR_ID_LIST",
-    "ks": "KS_CREATOR_ID_LIST",
-    "bili": "BILI_CREATOR_ID_LIST",
-    "wb": "WEIBO_CREATOR_ID_LIST",
-    "tieba": "TIEBA_CREATOR_URL_LIST",
-    "zhihu": "ZHIHU_CREATOR_URL_LIST",
-}
-
-SEARCH_PAGE_HINTS = {
-    "xhs": 20,
-    "dy": 15,
-    "ks": 20,
-    "bili": 20,
-    "wb": 10,
-    "tieba": 10,
-    "zhihu": 20,
-}
-
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a migrated platform crawl entry.")
-    parser.add_argument("--platform", choices=list(PLATFORM_RUNNER_MODE_ATTR.keys()), required=True)
-    parser.add_argument("--mode", choices=["search", "detail", "creator"], required=True)
+    parser.add_argument("--request-json", help="Serialized resolved crawler config payload.")
+    parser.add_argument("--platform", choices=list(PLATFORM_RUNNER_MODE_ATTR.keys()))
+    parser.add_argument("--mode", choices=["search", "detail", "creator"])
     parser.add_argument("--login-type", choices=["qrcode", "phone", "cookie"], help="Login type override.")
     parser.add_argument(
         "--save-option",
@@ -86,7 +63,28 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--sort-type", default="", help="Platform-specific search sort/type override.")
     parser.add_argument("--include-comments", action="store_true", help="Enable comments crawling.")
     parser.add_argument("--comment-limit", type=int, help="Single-note comment limit override.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.request_json:
+        if not args.platform or not args.mode:
+            parser.error("--platform and --mode are required unless --request-json is provided")
+    return args
+
+
+def _split_csv(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not value:
+        return []
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def _parse_request_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.request_json:
+        return {}
+    payload = json.loads(args.request_json)
+    if not isinstance(payload, dict):
+        raise ValueError("--request-json must decode to an object")
+    return payload
 
 
 def _apply_runtime_overrides(args: argparse.Namespace) -> None:
@@ -114,18 +112,108 @@ def _apply_runtime_overrides(args: argparse.Namespace) -> None:
             raise ValueError("--mode search requires at least one --keyword")
         config.KEYWORDS = ",".join(keywords)
         config.START_PAGE = int(args.start_page)
-        config.CRAWLER_MAX_NOTES_COUNT = max(1, int(args.max_pages)) * SEARCH_PAGE_HINTS.get(args.platform, 20)
+        config.CRAWLER_MAX_NOTES_COUNT = max(1, int(args.max_pages)) * PLATFORM_SEARCH_PAGE_HINTS.get(args.platform, 20)
         _apply_search_sort(args.platform, args.sort_type)
     elif args.mode == "detail":
         specified_ids = [item.strip() for item in args.specified_id if item.strip()]
         if not specified_ids:
             raise ValueError("--mode detail requires at least one --specified-id")
-        setattr(config, DETAIL_LIST_ATTR[args.platform], specified_ids)
+        setattr(config, PLATFORM_DETAIL_LIST_ATTR[args.platform], specified_ids)
     elif args.mode == "creator":
         creator_ids = [item.strip() for item in args.creator_id if item.strip()]
         if not creator_ids:
             raise ValueError("--mode creator requires at least one --creator-id")
-        setattr(config, CREATOR_LIST_ATTR[args.platform], creator_ids)
+        setattr(config, PLATFORM_CREATOR_LIST_ATTR[args.platform], creator_ids)
+
+
+def _apply_shared_runtime(payload: dict[str, Any]) -> None:
+    platform = str(payload["platform"])
+    mode = str(payload["crawler_type"])
+    config.PLATFORM = platform
+    config.CRAWLER_TYPE = mode
+    if payload.get("login_type"):
+        config.LOGIN_TYPE = str(payload["login_type"])
+    if payload.get("save_option"):
+        config.SAVE_DATA_OPTION = str(payload["save_option"])
+    if payload.get("cookies"):
+        config.COOKIES = str(payload["cookies"])
+    if payload.get("headless") is not None:
+        headless = bool(payload["headless"])
+        config.HEADLESS = headless
+        config.CDP_HEADLESS = headless
+    config.ENABLE_GET_COMMENTS = bool(payload.get("enable_comments", False))
+    if payload.get("comment_limit") is not None:
+        config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = int(payload["comment_limit"])
+
+
+def _build_requirement(payload: dict[str, Any]) -> Any:
+    platform = str(payload["platform"])
+    mode = str(payload["crawler_type"])
+    keywords = _split_csv(payload.get("keywords"))
+    specified_ids = _split_csv(payload.get("specified_ids"))
+    creator_ids = _split_csv(payload.get("creator_ids"))
+    shared = {
+        "mode": mode,
+        "start_page": int(payload.get("start_page", 1)),
+        "max_pages": int(payload.get("max_pages", 1)),
+        "include_comments": bool(payload.get("enable_comments", False)),
+        "comment_limit": payload.get("comment_limit"),
+        "metadata": {"source": "webui_api"},
+    }
+
+    if platform == "xhs":
+        return XhsCrawlRequirement(
+            keywords=keywords,
+            note_urls=specified_ids,
+            creator_urls=creator_ids,
+            sort_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
+            **shared,
+        )
+    if platform == "dy":
+        return DouyinCrawlRequirement(
+            keywords=keywords,
+            aweme_ids=specified_ids,
+            creator_ids=creator_ids,
+            sort_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
+            **shared,
+        )
+    if platform == "wb":
+        return WeiboCrawlRequirement(
+            keywords=keywords,
+            note_ids=specified_ids,
+            creator_ids=creator_ids,
+            search_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
+            **shared,
+        )
+    if platform == "bili":
+        return BilibiliCrawlRequirement(
+            keywords=keywords,
+            video_ids=specified_ids,
+            creator_ids=creator_ids,
+            **shared,
+        )
+    if platform == "ks":
+        return KuaishouCrawlRequirement(
+            keywords=keywords,
+            video_ids=specified_ids,
+            creator_ids=creator_ids,
+            **shared,
+        )
+    if platform == "tieba":
+        return TiebaCrawlRequirement(
+            keywords=keywords,
+            note_ids=specified_ids,
+            creator_urls=creator_ids,
+            **shared,
+        )
+    if platform == "zhihu":
+        return ZhihuCrawlRequirement(
+            keywords=keywords,
+            note_urls=specified_ids,
+            creator_urls=creator_ids,
+            **shared,
+        )
+    raise NotImplementedError(f"Requirement entry is not supported for platform: {platform}")
 
 
 def _apply_search_sort(platform: str, sort_type: str) -> None:
@@ -162,6 +250,21 @@ def _summarize(args: argparse.Namespace) -> dict[str, Any]:
 async def main() -> None:
     global crawler
     args = _parse_args()
+    request_payload = _parse_request_payload(args)
+    if request_payload:
+        _apply_shared_runtime(request_payload)
+        crawler = CrawlerFactory.create_crawler(platform=str(request_payload["platform"]))
+        requirement = _build_requirement(request_payload)
+        result = await crawler.start_with_requirement(requirement)
+        summary = {
+            "mode": "requirement_entry",
+            "request": request_payload,
+            "requirement": asdict(requirement),
+            "result": result,
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
     _apply_runtime_overrides(args)
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
@@ -172,6 +275,16 @@ async def async_cleanup() -> None:
     global crawler
     if crawler and hasattr(crawler, "close"):
         await crawler.close()
+    elif crawler and getattr(crawler, "cdp_manager", None):
+        try:
+            await crawler.cdp_manager.cleanup(force=True)
+        except Exception:
+            pass
+    elif crawler and getattr(crawler, "browser_context", None):
+        try:
+            await crawler.browser_context.close()
+        except Exception:
+            pass
     if config.SAVE_DATA_OPTION in ("db", "sqlite"):
         await db.close()
 
