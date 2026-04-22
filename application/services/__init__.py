@@ -2,6 +2,7 @@
 
 from .crawl_service import CrawlService
 from .crawl_state_service import CrawlStateService
+from .bilibili_platform_runner import BilibiliPlatformRunner
 from .douyin_platform_runner import DouyinPlatformRunner
 from .douyin_task_executor import DouyinTaskExecutor
 from .douyin_task_planner import DouyinTaskPlanner
@@ -15,6 +16,7 @@ from .zhihu_platform_runner import ZhihuPlatformRunner
 __all__ = [
     "CrawlService",
     "CrawlStateService",
+    "BilibiliPlatformRunner",
     "DouyinPlatformRunner",
     "DouyinTaskExecutor",
     "DouyinTaskPlanner",

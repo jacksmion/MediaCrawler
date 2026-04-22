@@ -40,7 +40,13 @@ from playwright.async_api import (
 from playwright._impl._errors import TargetClosedError
 
 import config
+from application.services.bilibili_platform_runner import BilibiliPlatformRunner
+from application.services.crawl_state_service import CrawlStateService
+from application.services.event_service import EventService
+from application.services.normalized_content_service import NormalizedContentService
+from application.services.raw_record_service import RawRecordService
 from base.base_crawler import AbstractCrawler
+from connectors.bilibili.errors import BilibiliDataFetchError
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import bilibili as bilibili_store
 from tools import utils
@@ -65,6 +71,36 @@ class BilibiliCrawler(AbstractCrawler):
         self.user_agent = utils.get_user_agent()
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        self._platform_http_proxy: Optional[str] = None
+        self.crawl_state_service = CrawlStateService()
+        self.event_service = EventService()
+        self.normalized_content_service = NormalizedContentService()
+        self.raw_record_service = RawRecordService()
+        self.platform_runner = BilibiliPlatformRunner(
+            self,
+            crawl_state_service=self.crawl_state_service,
+            event_service=self.event_service,
+            normalized_content_service=self.normalized_content_service,
+            raw_record_service=self.raw_record_service,
+        )
+
+    @staticmethod
+    def _bilibili_platform_runner_mode() -> str:
+        return str(getattr(config, "BILIBILI_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
+
+    def _use_platform_runner_for(self, capability: str) -> bool:
+        mode = self._bilibili_platform_runner_mode()
+        if mode == "all":
+            return True
+        if mode == capability:
+            return True
+        toggle_map = {
+            "search": getattr(config, "ENABLE_BILIBILI_CONNECTOR_SEARCH", False),
+            "detail": getattr(config, "ENABLE_BILIBILI_CONNECTOR_DETAIL", False),
+            "comments": getattr(config, "ENABLE_BILIBILI_CONNECTOR_COMMENTS", False),
+            "creator": getattr(config, "ENABLE_BILIBILI_CONNECTOR_CREATOR", False),
+        }
+        return bool(toggle_map.get(capability, False))
 
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -72,6 +108,7 @@ class BilibiliCrawler(AbstractCrawler):
             self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
             ip_proxy_info: IpInfoModel = await self.ip_proxy_pool.get_proxy()
             playwright_proxy_format, httpx_proxy_format = utils.format_proxy_info(ip_proxy_info)
+        self._platform_http_proxy = httpx_proxy_format
 
         async with async_playwright() as playwright:
             # Choose launch mode based on configuration
@@ -133,6 +170,9 @@ class BilibiliCrawler(AbstractCrawler):
         """
         search bilibili video
         """
+        if self._use_platform_runner_for("search"):
+            await self.search_with_platform_connector()
+            return
         # Search for video and retrieve their comment information.
         if config.BILI_SEARCH_MODE == "normal":
             await self.search_by_keywords()
@@ -142,6 +182,54 @@ class BilibiliCrawler(AbstractCrawler):
             await self.search_by_keywords_in_time_range(daily_limit=True)
         else:
             utils.logger.warning(f"Unknown BILI_SEARCH_MODE: {config.BILI_SEARCH_MODE}")
+
+    async def search_with_platform_connector(self):
+        """Search bilibili videos through the new platform runner while keeping legacy storage flow."""
+        utils.logger.info("[BilibiliCrawler.search_with_platform_connector] Begin search bilibili keywords via platform runner")
+        bili_limit_count = 20
+        if config.CRAWLER_MAX_NOTES_COUNT < bili_limit_count:
+            config.CRAWLER_MAX_NOTES_COUNT = bili_limit_count
+        start_page = config.START_PAGE
+        for keyword in config.KEYWORDS.split(","):
+            source_keyword_var.set(keyword)
+            utils.logger.info(f"[BilibiliCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            page = 1
+            while (page - start_page + 1) * bili_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+                if page < start_page:
+                    utils.logger.info(f"[BilibiliCrawler.search_with_platform_connector] Skip page: {page}")
+                    page += 1
+                    continue
+                try:
+                    search_result = await self.platform_runner.run_search_page(keyword=keyword, page=page, page_size=bili_limit_count)
+                except BilibiliDataFetchError as exc:
+                    utils.logger.error(
+                        f"[BilibiliCrawler.search_with_platform_connector] search bilibili keyword: {keyword}, page: {page} failed, err: {exc}"
+                    )
+                    break
+                search_items = search_result.get("items", [])
+                if not search_items:
+                    utils.logger.info(
+                        f"[BilibiliCrawler.search_with_platform_connector] No more videos for '{keyword}', moving to next keyword."
+                    )
+                    break
+                video_id_list: List[str] = []
+                for video_item in search_items:
+                    aid = video_item.get("aid")
+                    bvid = video_item.get("bvid", "")
+                    video_detail = await self.get_video_info_with_platform_runner(aid=aid, bvid=bvid)
+                    if video_detail:
+                        view = video_detail.get("View", {})
+                        current_aid = str(view.get("aid") or "")
+                        if current_aid:
+                            video_id_list.append(current_aid)
+                        await bilibili_store.update_bilibili_video(video_detail)
+                        await bilibili_store.update_up_info(video_detail)
+                page += 1
+                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                utils.logger.info(
+                    f"[BilibiliCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                )
+                await self.batch_get_video_comments(video_id_list)
 
     @staticmethod
     async def get_pubtime_datetime(
@@ -345,6 +433,9 @@ class BilibiliCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
+                if self._use_platform_runner_for("comments"):
+                    await self.get_comments_with_platform_runner(video_id)
+                    return
                 utils.logger.info(f"[BilibiliCrawler.get_comments] begin get video_id: {video_id} comments ...")
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(f"[BilibiliCrawler.get_comments] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for video {video_id}")
@@ -363,11 +454,32 @@ class BilibiliCrawler(AbstractCrawler):
                 # Propagate the exception to be caught by the main loop
                 raise
 
+    async def get_comments_with_platform_runner(self, video_id: str):
+        """Get bilibili comments through the new platform runner and keep legacy storage."""
+        try:
+            utils.logger.info(f"[BilibiliCrawler.get_comments_with_platform_runner] begin get video_id: {video_id} comments ...")
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[BilibiliCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for video {video_id}"
+            )
+            result = await self.platform_runner.run_comments(
+                content_id=video_id,
+                limit=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
+            )
+            comments = result.get("comments", [])
+            if comments:
+                await bilibili_store.batch_update_bilibili_video_comments(video_id, comments)
+        except BilibiliDataFetchError as ex:
+            utils.logger.error(f"[BilibiliCrawler.get_comments_with_platform_runner] get video_id: {video_id} comment error: {ex}")
+
     async def get_creator_videos(self, creator_id: int):
         """
         get videos for a creator
         :return:
         """
+        if self._use_platform_runner_for("creator"):
+            await self.get_creator_videos_with_platform_runner(creator_id)
+            return
         ps = 30
         pn = 1
         while True:
@@ -378,6 +490,43 @@ class BilibiliCrawler(AbstractCrawler):
                 break
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(f"[BilibiliCrawler.get_creator_videos] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {pn}")
+            pn += 1
+
+    async def get_creator_videos_with_platform_runner(self, creator_id: int):
+        """Get creator videos through the new platform runner."""
+        pn = 1
+        ps = 30
+        while True:
+            try:
+                result = await self.platform_runner.run_creator_contents(
+                    creator_id=str(creator_id),
+                    cursor=str(pn),
+                    limit=ps,
+                )
+            except BilibiliDataFetchError as exc:
+                utils.logger.error(f"[BilibiliCrawler.get_creator_videos_with_platform_runner] Failed to fetch creator videos: {exc}")
+                break
+            video_items = result.get("items", [])
+            if not video_items:
+                break
+            video_bvids_list = []
+            for video_item in video_items:
+                view = video_item.get("View", {})
+                bvid = view.get("bvid", "")
+                aid = str(view.get("aid") or "")
+                if bvid:
+                    video_bvids_list.append(bvid)
+                if aid:
+                    await bilibili_store.update_bilibili_video(video_item)
+                    await bilibili_store.update_up_info(video_item)
+            if video_bvids_list:
+                await self.get_specified_videos(video_bvids_list)
+            if not result.get("has_more"):
+                break
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[BilibiliCrawler.get_creator_videos_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {pn}"
+            )
             pn += 1
 
     async def get_specified_videos(self, video_url_list: List[str]):
@@ -422,6 +571,8 @@ class BilibiliCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
+                if self._use_platform_runner_for("detail"):
+                    return await self.get_video_info_with_platform_runner(aid=aid, bvid=bvid)
                 result = await self.bili_client.get_video_info(aid=aid, bvid=bvid)
 
                 # Sleep after fetching video details
@@ -435,6 +586,20 @@ class BilibiliCrawler(AbstractCrawler):
             except KeyError as ex:
                 utils.logger.error(f"[BilibiliCrawler.get_video_info_task] have not fund note detail video_id:{bvid}, err: {ex}")
                 return None
+
+    async def get_video_info_with_platform_runner(self, aid: int | None = None, bvid: str = "") -> Optional[Dict]:
+        """Get bilibili video detail through the new platform runner."""
+        try:
+            content_id = str(aid or 0)
+            result = await self.platform_runner.run_detail(content_id=content_id, bvid=bvid)
+            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            utils.logger.info(
+                f"[BilibiliCrawler.get_video_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {bvid or aid}"
+            )
+            return result.get("video")
+        except BilibiliDataFetchError as ex:
+            utils.logger.error(f"[BilibiliCrawler.get_video_info_with_platform_runner] Get video detail error: {ex}")
+            return None
 
     async def get_video_play_url_task(self, aid: int, cid: int, semaphore: asyncio.Semaphore) -> Union[Dict, None]:
         """

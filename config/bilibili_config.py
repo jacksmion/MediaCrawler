@@ -18,6 +18,13 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 # bilili platform configuration
 
+BILIBILI_PLATFORM_RUNNER_MODE = "legacy"
+
+ENABLE_BILIBILI_CONNECTOR_SEARCH = False
+ENABLE_BILIBILI_CONNECTOR_DETAIL = False
+ENABLE_BILIBILI_CONNECTOR_COMMENTS = False
+ENABLE_BILIBILI_CONNECTOR_CREATOR = False
+
 # Control the number of videos/posts crawled per day
 MAX_NOTES_PER_DAY = 1
 
