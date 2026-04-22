@@ -79,13 +79,13 @@ class DouYinCrawler(AbstractCrawler):
         )
 
     @staticmethod
-    def _douyin_platform_runner_mode() -> str:
-        """Return the configured Douyin runner mode in normalized form."""
+    def _douyin_task_executor_mode() -> str:
+        """Return the configured Douyin task executor mode in normalized form."""
         return str(getattr(config, "DOUYIN_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
 
-    def _use_platform_runner_for(self, capability: str) -> bool:
-        """Decide whether a Douyin capability should run through the new platform runner."""
-        mode = self._douyin_platform_runner_mode()
+    def _use_task_executor_for(self, capability: str) -> bool:
+        """Decide whether a Douyin capability should run through the task executor path."""
+        mode = self._douyin_task_executor_mode()
         if mode == "all":
             return True
         if mode == capability:
@@ -197,8 +197,8 @@ class DouYinCrawler(AbstractCrawler):
             await self.dy_client.update_cookies(browser_context=self.browser_context)
 
     async def search(self) -> None:
-        if self._use_platform_runner_for("search"):
-            await self.search_with_platform_connector()
+        if self._use_task_executor_for("search"):
+            await self.search_with_task_executor()
             return
         utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
         dy_limit_count = 10  # douyin limit page fixed value
@@ -256,22 +256,22 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.info(f"[DouYinCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
             utils.logger.info(f"[DouYinCrawler.search] keyword:{keyword}, aweme_list:{aweme_list}")
 
-    async def search_with_platform_connector(self) -> None:
-        """Run search through the new platform connector while keeping legacy storage flow."""
-        utils.logger.info("[DouYinCrawler.search_with_platform_connector] Begin search via new Douyin connector bridge")
+    async def search_with_task_executor(self) -> None:
+        """Run search through the task executor while keeping legacy storage flow."""
+        utils.logger.info("[DouYinCrawler.search_with_task_executor] Begin search via Douyin task executor")
         dy_limit_count = 10
         if config.CRAWLER_MAX_NOTES_COUNT < dy_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = dy_limit_count
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
-            utils.logger.info(f"[DouYinCrawler.search_with_platform_connector] Current keyword: {keyword}")
+            utils.logger.info(f"[DouYinCrawler.search_with_task_executor] Current keyword: {keyword}")
             page = 1
             search_id = ""
             aweme_list: List[str] = []
             while (page - start_page + 1) * dy_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
-                    utils.logger.info(f"[DouYinCrawler.search_with_platform_connector] Skip {page}")
+                    utils.logger.info(f"[DouYinCrawler.search_with_task_executor] Skip {page}")
                     page += 1
                     continue
                 try:
@@ -283,13 +283,13 @@ class DouYinCrawler(AbstractCrawler):
                     )
                 except DouyinDataFetchError as exc:
                     utils.logger.error(
-                        f"[DouYinCrawler.search_with_platform_connector] search failed, keyword: {keyword}, page: {page}, err: {exc}"
+                        f"[DouYinCrawler.search_with_task_executor] search failed, keyword: {keyword}, page: {page}, err: {exc}"
                     )
                     break
                 search_items = result.get("items", [])
                 if not search_items:
                     utils.logger.info(
-                        f"[DouYinCrawler.search_with_platform_connector] search douyin keyword: {keyword}, page: {page} is empty"
+                        f"[DouYinCrawler.search_with_task_executor] search douyin keyword: {keyword}, page: {page} is empty"
                     )
                     break
                 page_aweme_list: List[str] = []
@@ -314,10 +314,10 @@ class DouYinCrawler(AbstractCrawler):
                 page += 1
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(
-                    f"[DouYinCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                    f"[DouYinCrawler.search_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
                 )
             utils.logger.info(
-                f"[DouYinCrawler.search_with_platform_connector] keyword:{keyword}, aweme_list:{aweme_list}"
+                f"[DouYinCrawler.search_with_task_executor] keyword:{keyword}, aweme_list:{aweme_list}"
             )
 
     async def get_specified_awemes(self):
@@ -365,8 +365,8 @@ class DouYinCrawler(AbstractCrawler):
     async def get_aweme_detail(self, aweme_id: str, semaphore: asyncio.Semaphore) -> Any:
         """Get note detail"""
         async with semaphore:
-            if self._use_platform_runner_for("detail"):
-                return await self.get_aweme_detail_with_platform_connector(aweme_id)
+            if self._use_task_executor_for("detail"):
+                return await self.get_aweme_detail_with_task_executor(aweme_id)
             try:
                 result = await self.dy_client.get_video_by_id(aweme_id)
                 # Sleep after fetching aweme detail
@@ -380,19 +380,19 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.error(f"[DouYinCrawler.get_aweme_detail] have not fund note detail aweme_id:{aweme_id}, err: {ex}")
                 return None
 
-    async def get_aweme_detail_with_platform_connector(self, aweme_id: str) -> Any:
-        """Fetch aweme detail through the new connector bridge and archive its outputs."""
+    async def get_aweme_detail_with_task_executor(self, aweme_id: str) -> Any:
+        """Fetch aweme detail through the task executor and archive its outputs."""
         try:
             result = await self.execute_platform_task(
                 self._new_platform_task(task_type="detail", params={"aweme_id": aweme_id})
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[DouYinCrawler.get_aweme_detail_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching aweme {aweme_id}"
+                f"[DouYinCrawler.get_aweme_detail_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching aweme {aweme_id}"
             )
             return result["aweme_detail"]
         except DouyinDataFetchError as exc:
-            utils.logger.error(f"[DouYinCrawler.get_aweme_detail_with_platform_connector] Get aweme detail error: {exc}")
+            utils.logger.error(f"[DouYinCrawler.get_aweme_detail_with_task_executor] Get aweme detail error: {exc}")
             return None
 
     async def batch_get_note_comments(self, aweme_list: List[str]) -> None:
@@ -413,8 +413,8 @@ class DouYinCrawler(AbstractCrawler):
 
     async def get_comments(self, aweme_id: str, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
-            if self._use_platform_runner_for("comments"):
-                await self.get_comments_with_platform_connector(aweme_id)
+            if self._use_task_executor_for("comments"):
+                await self.get_comments_with_task_executor(aweme_id)
                 return
             try:
                 # Pass the list of keywords to the get_aweme_all_comments method
@@ -434,8 +434,8 @@ class DouYinCrawler(AbstractCrawler):
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
 
-    async def get_comments_with_platform_connector(self, aweme_id: str) -> None:
-        """Fetch comments through the new connector bridge and persist event/raw data."""
+    async def get_comments_with_task_executor(self, aweme_id: str) -> None:
+        """Fetch comments through the task executor and persist event/raw data."""
         try:
             comment_result = await self.execute_platform_task(
                 self._new_platform_task(task_type="comments", params={"aweme_id": aweme_id})
@@ -445,21 +445,21 @@ class DouYinCrawler(AbstractCrawler):
                 await douyin_store.batch_update_dy_aweme_comments(aweme_id, comments)
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[DouYinCrawler.get_comments_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for aweme {aweme_id}"
+                f"[DouYinCrawler.get_comments_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching comments for aweme {aweme_id}"
             )
             utils.logger.info(
-                f"[DouYinCrawler.get_comments_with_platform_connector] aweme_id: {aweme_id} comments have all been obtained and filtered ..."
+                f"[DouYinCrawler.get_comments_with_task_executor] aweme_id: {aweme_id} comments have all been obtained and filtered ..."
             )
         except DouyinDataFetchError as exc:
-            utils.logger.error(f"[DouYinCrawler.get_comments_with_platform_connector] aweme_id: {aweme_id} get comments failed, error: {exc}")
+            utils.logger.error(f"[DouYinCrawler.get_comments_with_task_executor] aweme_id: {aweme_id} get comments failed, error: {exc}")
             return
 
     async def get_creators_and_videos(self) -> None:
         """
         Get the information and videos of the specified creator from URLs or IDs
         """
-        if self._use_platform_runner_for("creator"):
-            await self.get_creators_and_videos_with_platform_runner()
+        if self._use_task_executor_for("creator"):
+            await self.get_creators_and_videos_with_task_executor()
             return
         utils.logger.info("[DouYinCrawler.get_creators_and_videos] Begin get douyin creators")
         utils.logger.info("[DouYinCrawler.get_creators_and_videos] Parsing creator URLs...")
@@ -483,21 +483,21 @@ class DouYinCrawler(AbstractCrawler):
             video_ids = [video_item.get("aweme_id") for video_item in all_video_list]
             await self.batch_get_note_comments(video_ids)
 
-    async def get_creators_and_videos_with_platform_runner(self) -> None:
-        """Fetch creators and their contents through the new platform runner."""
-        utils.logger.info("[DouYinCrawler.get_creators_and_videos_with_platform_runner] Begin get douyin creators via platform runner")
-        utils.logger.info("[DouYinCrawler.get_creators_and_videos_with_platform_runner] Parsing creator URLs...")
+    async def get_creators_and_videos_with_task_executor(self) -> None:
+        """Fetch creators and their contents through the task executor."""
+        utils.logger.info("[DouYinCrawler.get_creators_and_videos_with_task_executor] Begin get douyin creators via task executor")
+        utils.logger.info("[DouYinCrawler.get_creators_and_videos_with_task_executor] Parsing creator URLs...")
 
         for creator_url in config.DY_CREATOR_ID_LIST:
             try:
                 creator_info_parsed = parse_creator_info_from_url(creator_url)
                 user_id = creator_info_parsed.sec_user_id
                 utils.logger.info(
-                    f"[DouYinCrawler.get_creators_and_videos_with_platform_runner] Parsed sec_user_id: {user_id} from {creator_url}"
+                    f"[DouYinCrawler.get_creators_and_videos_with_task_executor] Parsed sec_user_id: {user_id} from {creator_url}"
                 )
             except ValueError as e:
                 utils.logger.error(
-                    f"[DouYinCrawler.get_creators_and_videos_with_platform_runner] Failed to parse creator URL: {e}"
+                    f"[DouYinCrawler.get_creators_and_videos_with_task_executor] Failed to parse creator URL: {e}"
                 )
                 continue
 
@@ -510,7 +510,7 @@ class DouYinCrawler(AbstractCrawler):
                     await douyin_store.save_creator(user_id, creator=creator_payload)
             except DouyinDataFetchError as exc:
                 utils.logger.error(
-                    f"[DouYinCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator {user_id}: {exc}"
+                    f"[DouYinCrawler.get_creators_and_videos_with_task_executor] Failed to fetch creator {user_id}: {exc}"
                 )
                 continue
 
@@ -526,7 +526,7 @@ class DouYinCrawler(AbstractCrawler):
                     )
                 except DouyinDataFetchError as exc:
                     utils.logger.error(
-                        f"[DouYinCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator contents {user_id}: {exc}"
+                        f"[DouYinCrawler.get_creators_and_videos_with_task_executor] Failed to fetch creator contents {user_id}: {exc}"
                     )
                     break
 
@@ -544,7 +544,7 @@ class DouYinCrawler(AbstractCrawler):
                                 if keyword.strip()
                             ):
                                 utils.logger.info(
-                                    f"[DouYinCrawler.get_creators_and_videos_with_platform_runner] Skip aweme {aweme_item.get('aweme_id')} due to keyword mismatch"
+                                    f"[DouYinCrawler.get_creators_and_videos_with_task_executor] Skip aweme {aweme_item.get('aweme_id')} due to keyword mismatch"
                                 )
                                 continue
                         await douyin_store.update_douyin_aweme(aweme_item=aweme_item)

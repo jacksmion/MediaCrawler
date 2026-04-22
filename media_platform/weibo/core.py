@@ -87,11 +87,11 @@ class WeiboCrawler(AbstractCrawler):
         )
 
     @staticmethod
-    def _weibo_platform_runner_mode() -> str:
+    def _weibo_task_executor_mode() -> str:
         return str(getattr(config, "WEIBO_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
 
-    def _use_platform_runner_for(self, capability: str) -> bool:
-        mode = self._weibo_platform_runner_mode()
+    def _use_task_executor_for(self, capability: str) -> bool:
+        mode = self._weibo_task_executor_mode()
         if mode == "all":
             return True
         if mode == capability:
@@ -186,8 +186,8 @@ class WeiboCrawler(AbstractCrawler):
         search weibo note with keywords
         :return:
         """
-        if self._use_platform_runner_for("search"):
-            await self.search_with_platform_connector()
+        if self._use_task_executor_for("search"):
+            await self.search_with_task_executor()
             return
         utils.logger.info("[WeiboCrawler.search] Begin search weibo keywords")
         weibo_limit_count = 10  # weibo limit page fixed value
@@ -239,9 +239,9 @@ class WeiboCrawler(AbstractCrawler):
 
                 await self.batch_get_notes_comments(note_id_list)
 
-    async def search_with_platform_connector(self):
-        """Search Weibo through the new platform runner while keeping legacy storage flow."""
-        utils.logger.info("[WeiboCrawler.search_with_platform_connector] Begin search weibo keywords via platform runner")
+    async def search_with_task_executor(self):
+        """Search Weibo through the task executor while keeping legacy storage flow."""
+        utils.logger.info("[WeiboCrawler.search_with_task_executor] Begin search weibo keywords via task executor")
         weibo_limit_count = 10
         if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = weibo_limit_count
@@ -255,11 +255,11 @@ class WeiboCrawler(AbstractCrawler):
             search_type = SearchType.VIDEO
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
-            utils.logger.info(f"[WeiboCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            utils.logger.info(f"[WeiboCrawler.search_with_task_executor] Current search keyword: {keyword}")
             page = 1
             while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
-                    utils.logger.info(f"[WeiboCrawler.search_with_platform_connector] Skip page: {page}")
+                    utils.logger.info(f"[WeiboCrawler.search_with_task_executor] Skip page: {page}")
                     page += 1
                     continue
                 try:
@@ -271,7 +271,7 @@ class WeiboCrawler(AbstractCrawler):
                     )
                 except WeiboDataFetchError as exc:
                     utils.logger.error(
-                        f"[WeiboCrawler.search_with_platform_connector] search weibo keyword: {keyword}, page: {page} failed, err: {exc}"
+                        f"[WeiboCrawler.search_with_task_executor] search weibo keyword: {keyword}, page: {page} failed, err: {exc}"
                     )
                     break
                 note_list = result.get("items", [])
@@ -289,7 +289,7 @@ class WeiboCrawler(AbstractCrawler):
                 page += 1
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(
-                    f"[WeiboCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                    f"[WeiboCrawler.search_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
                 )
                 await self.batch_get_notes_comments(note_id_list)
 
@@ -315,8 +315,8 @@ class WeiboCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
-                if self._use_platform_runner_for("detail"):
-                    return await self.get_note_info_with_platform_runner(note_id)
+                if self._use_task_executor_for("detail"):
+                    return await self.get_note_info_with_task_executor(note_id)
                 result = await self.wb_client.get_note_info_by_id(note_id)
 
                 # Sleep after fetching note details
@@ -331,19 +331,19 @@ class WeiboCrawler(AbstractCrawler):
                 utils.logger.error(f"[WeiboCrawler.get_note_info_task] have not fund note detail note_id:{note_id}, err: {ex}")
                 return None
 
-    async def get_note_info_with_platform_runner(self, note_id: str) -> Optional[Dict]:
-        """Get note detail through the new platform runner."""
+    async def get_note_info_with_task_executor(self, note_id: str) -> Optional[Dict]:
+        """Get note detail through the task executor."""
         try:
             result = await self.execute_platform_task(
                 self._new_platform_task(task_type="detail", params={"note_id": note_id})
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[WeiboCrawler.get_note_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
+                f"[WeiboCrawler.get_note_info_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
             )
             return result.get("note")
         except WeiboDataFetchError as ex:
-            utils.logger.error(f"[WeiboCrawler.get_note_info_with_platform_runner] Get note detail error: {ex}")
+            utils.logger.error(f"[WeiboCrawler.get_note_info_with_task_executor] Get note detail error: {ex}")
             return None
 
     async def batch_get_notes_comments(self, note_id_list: List[str]):
@@ -373,8 +373,8 @@ class WeiboCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
-                if self._use_platform_runner_for("comments"):
-                    await self.get_note_comments_with_platform_runner(note_id)
+                if self._use_task_executor_for("comments"):
+                    await self.get_note_comments_with_task_executor(note_id)
                     return
                 utils.logger.info(f"[WeiboCrawler.get_note_comments] begin get note_id: {note_id} comments ...")
 
@@ -393,13 +393,13 @@ class WeiboCrawler(AbstractCrawler):
             except Exception as e:
                 utils.logger.error(f"[WeiboCrawler.get_note_comments] may be been blocked, err:{e}")
 
-    async def get_note_comments_with_platform_runner(self, note_id: str):
-        """Get Weibo comments through the new platform runner and keep legacy storage."""
+    async def get_note_comments_with_task_executor(self, note_id: str):
+        """Get Weibo comments through the task executor and keep legacy storage."""
         try:
-            utils.logger.info(f"[WeiboCrawler.get_note_comments_with_platform_runner] begin get note_id: {note_id} comments ...")
+            utils.logger.info(f"[WeiboCrawler.get_note_comments_with_task_executor] begin get note_id: {note_id} comments ...")
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[WeiboCrawler.get_note_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_id}"
+                f"[WeiboCrawler.get_note_comments_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_id}"
             )
             result = await self.execute_platform_task(
                 self._new_platform_task(
@@ -411,7 +411,7 @@ class WeiboCrawler(AbstractCrawler):
             if comments:
                 await weibo_store.batch_update_weibo_note_comments(note_id, comments)
         except WeiboDataFetchError as ex:
-            utils.logger.error(f"[WeiboCrawler.get_note_comments_with_platform_runner] get note_id: {note_id} comment error: {ex}")
+            utils.logger.error(f"[WeiboCrawler.get_note_comments_with_task_executor] get note_id: {note_id} comment error: {ex}")
 
     async def get_note_images(self, mblog: Dict):
         """
@@ -450,8 +450,8 @@ class WeiboCrawler(AbstractCrawler):
         Returns:
 
         """
-        if self._use_platform_runner_for("creator"):
-            await self.get_creators_and_notes_with_platform_runner()
+        if self._use_task_executor_for("creator"):
+            await self.get_creators_and_notes_with_task_executor()
             return
         utils.logger.info("[WeiboCrawler.get_creators_and_notes] Begin get weibo creators")
         for user_id in config.WEIBO_CREATOR_ID_LIST:
@@ -483,9 +483,9 @@ class WeiboCrawler(AbstractCrawler):
             else:
                 utils.logger.error(f"[WeiboCrawler.get_creators_and_notes] get creator info error, creator_id:{user_id}")
 
-    async def get_creators_and_notes_with_platform_runner(self) -> None:
-        """Fetch creator info and notes through the new Weibo platform runner."""
-        utils.logger.info("[WeiboCrawler.get_creators_and_notes_with_platform_runner] Begin get weibo creators")
+    async def get_creators_and_notes_with_task_executor(self) -> None:
+        """Fetch creator info and notes through the Weibo task executor."""
+        utils.logger.info("[WeiboCrawler.get_creators_and_notes_with_task_executor] Begin get weibo creators")
         for user_id in config.WEIBO_CREATOR_ID_LIST:
             try:
                 creator_result = await self.execute_platform_task(
@@ -493,7 +493,7 @@ class WeiboCrawler(AbstractCrawler):
                 )
             except WeiboDataFetchError as exc:
                 utils.logger.error(
-                    f"[WeiboCrawler.get_creators_and_notes_with_platform_runner] get creator info error, creator_id:{user_id}, err:{exc}"
+                    f"[WeiboCrawler.get_creators_and_notes_with_task_executor] get creator info error, creator_id:{user_id}, err:{exc}"
                 )
                 continue
             creator_info = creator_result.get("creator", {})
@@ -511,7 +511,7 @@ class WeiboCrawler(AbstractCrawler):
                     )
                 except WeiboDataFetchError as exc:
                     utils.logger.error(
-                        f"[WeiboCrawler.get_creators_and_notes_with_platform_runner] get creator notes error, creator_id:{user_id}, err:{exc}"
+                        f"[WeiboCrawler.get_creators_and_notes_with_task_executor] get creator notes error, creator_id:{user_id}, err:{exc}"
                     )
                     break
                 note_list = contents_result.get("items", [])

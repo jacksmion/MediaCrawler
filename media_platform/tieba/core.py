@@ -91,11 +91,11 @@ class TieBaCrawler(AbstractCrawler):
         )
 
     @staticmethod
-    def _tieba_platform_runner_mode() -> str:
+    def _tieba_task_executor_mode() -> str:
         return str(getattr(config, "TIEBA_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
 
-    def _use_platform_runner_for(self, capability: str) -> bool:
-        mode = self._tieba_platform_runner_mode()
+    def _use_task_executor_for(self, capability: str) -> bool:
+        mode = self._tieba_task_executor_mode()
         if mode == "all":
             return True
         if mode == capability:
@@ -198,8 +198,8 @@ class TieBaCrawler(AbstractCrawler):
         Returns:
 
         """
-        if self._use_platform_runner_for("search"):
-            await self.search_with_platform_connector()
+        if self._use_task_executor_for("search"):
+            await self.search_with_task_executor()
             return
         utils.logger.info(
             "[BaiduTieBaCrawler.search] Begin search baidu tieba keywords"
@@ -257,20 +257,20 @@ class TieBaCrawler(AbstractCrawler):
                     )
                     break
 
-    async def search_with_platform_connector(self) -> None:
-        """Run Tieba keyword search through the new platform runner while keeping legacy storage flow."""
-        utils.logger.info("[BaiduTieBaCrawler.search_with_platform_connector] Begin search tieba keywords via platform runner")
+    async def search_with_task_executor(self) -> None:
+        """Run Tieba keyword search through the task executor while keeping legacy storage flow."""
+        utils.logger.info("[BaiduTieBaCrawler.search_with_task_executor] Begin search tieba keywords via task executor")
         tieba_limit_count = 10
         if config.CRAWLER_MAX_NOTES_COUNT < tieba_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
-            utils.logger.info(f"[BaiduTieBaCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            utils.logger.info(f"[BaiduTieBaCrawler.search_with_task_executor] Current search keyword: {keyword}")
             page = 1
             while (page - start_page + 1) * tieba_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
-                    utils.logger.info(f"[BaiduTieBaCrawler.search_with_platform_connector] Skip page {page}")
+                    utils.logger.info(f"[BaiduTieBaCrawler.search_with_task_executor] Skip page {page}")
                     page += 1
                     continue
                 try:
@@ -282,17 +282,17 @@ class TieBaCrawler(AbstractCrawler):
                     )
                 except TiebaDataFetchError as exc:
                     utils.logger.error(
-                        f"[BaiduTieBaCrawler.search_with_platform_connector] Search keywords error, current page: {page}, current keyword: {keyword}, err: {exc}"
+                        f"[BaiduTieBaCrawler.search_with_task_executor] Search keywords error, current page: {page}, current keyword: {keyword}, err: {exc}"
                     )
                     break
                 notes_list = [TiebaNote.model_validate(item) for item in result.get("items", [])]
                 if not notes_list:
-                    utils.logger.info("[BaiduTieBaCrawler.search_with_platform_connector] Search note list is empty")
+                    utils.logger.info("[BaiduTieBaCrawler.search_with_task_executor] Search note list is empty")
                     break
                 await self.get_specified_notes(note_id_list=[note.note_id for note in notes_list])
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(
-                    f"[TieBaCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page}"
+                    f"[TieBaCrawler.search_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page}"
                 )
                 page += 1
 
@@ -371,8 +371,8 @@ class TieBaCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
-                if self._use_platform_runner_for("detail"):
-                    return await self.get_note_detail_with_platform_connector(note_id)
+                if self._use_task_executor_for("detail"):
+                    return await self.get_note_detail_with_task_executor(note_id)
                 utils.logger.info(
                     f"[BaiduTieBaCrawler.get_note_detail] Begin get note detail, note_id: {note_id}"
                 )
@@ -399,19 +399,19 @@ class TieBaCrawler(AbstractCrawler):
                 )
                 return None
 
-    async def get_note_detail_with_platform_connector(self, note_id: str) -> Optional[TiebaNote]:
-        """Fetch note detail through the new platform runner and keep legacy flow."""
+    async def get_note_detail_with_task_executor(self, note_id: str) -> Optional[TiebaNote]:
+        """Fetch note detail through the task executor and keep legacy flow."""
         try:
             result = await self.execute_platform_task(
                 self._new_platform_task(task_type="detail", params={"note_id": note_id})
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[TieBaCrawler.get_note_detail_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
+                f"[TieBaCrawler.get_note_detail_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note details {note_id}"
             )
             return result.get("note")
         except TiebaDataFetchError as exc:
-            utils.logger.error(f"[TieBaCrawler.get_note_detail_with_platform_connector] Get note detail error: {exc}")
+            utils.logger.error(f"[TieBaCrawler.get_note_detail_with_task_executor] Get note detail error: {exc}")
             return None
 
     async def batch_get_note_comments(self, note_detail_list: List[TiebaNote]):
@@ -449,8 +449,8 @@ class TieBaCrawler(AbstractCrawler):
 
         """
         async with semaphore:
-            if self._use_platform_runner_for("comments"):
-                await self.get_comments_with_platform_connector(note_detail)
+            if self._use_task_executor_for("comments"):
+                await self.get_comments_with_task_executor(note_detail)
                 return
             utils.logger.info(
                 f"[BaiduTieBaCrawler.get_comments] Begin get note id comments {note_detail.note_id}"
@@ -467,15 +467,15 @@ class TieBaCrawler(AbstractCrawler):
                 max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
             )
 
-    async def get_comments_with_platform_connector(self, note_detail: TiebaNote) -> None:
-        """Fetch comments through the new Tieba platform runner and keep legacy storage."""
+    async def get_comments_with_task_executor(self, note_detail: TiebaNote) -> None:
+        """Fetch comments through the Tieba task executor and keep legacy storage."""
         try:
             utils.logger.info(
-                f"[BaiduTieBaCrawler.get_comments_with_platform_connector] Begin get note id comments {note_detail.note_id}"
+                f"[BaiduTieBaCrawler.get_comments_with_task_executor] Begin get note id comments {note_detail.note_id}"
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[TieBaCrawler.get_comments_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_detail.note_id}"
+                f"[TieBaCrawler.get_comments_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for note {note_detail.note_id}"
             )
             result = await self.execute_platform_task(
                 self._new_platform_task(
@@ -490,7 +490,7 @@ class TieBaCrawler(AbstractCrawler):
                     [TiebaComment.model_validate(comment) for comment in comments],
                 )
         except TiebaDataFetchError as exc:
-            utils.logger.error(f"[BaiduTieBaCrawler.get_comments_with_platform_connector] Get comments error: {exc}")
+            utils.logger.error(f"[BaiduTieBaCrawler.get_comments_with_task_executor] Get comments error: {exc}")
 
     async def get_creators_and_notes(self) -> None:
         """
@@ -498,8 +498,8 @@ class TieBaCrawler(AbstractCrawler):
         Returns:
 
         """
-        if self._use_platform_runner_for("creator"):
-            await self.get_creators_and_notes_with_platform_runner()
+        if self._use_task_executor_for("creator"):
+            await self.get_creators_and_notes_with_task_executor()
             return
         utils.logger.info(
             "[WeiboCrawler.get_creators_and_notes] Begin get weibo creators"
@@ -538,9 +538,9 @@ class TieBaCrawler(AbstractCrawler):
                     f"[WeiboCrawler.get_creators_and_notes] get creator info error, creator_url:{creator_url}"
                 )
 
-    async def get_creators_and_notes_with_platform_runner(self) -> None:
-        """Fetch creator info and notes through the new Tieba platform runner."""
-        utils.logger.info("[TieBaCrawler.get_creators_and_notes_with_platform_runner] Begin get tieba creators")
+    async def get_creators_and_notes_with_task_executor(self) -> None:
+        """Fetch creator info and notes through the Tieba task executor."""
+        utils.logger.info("[TieBaCrawler.get_creators_and_notes_with_task_executor] Begin get tieba creators")
         for creator_url in config.TIEBA_CREATOR_URL_LIST:
             try:
                 creator_result = await self.execute_platform_task(
@@ -548,7 +548,7 @@ class TieBaCrawler(AbstractCrawler):
                 )
             except TiebaDataFetchError as exc:
                 utils.logger.error(
-                    f"[TieBaCrawler.get_creators_and_notes_with_platform_runner] get creator info error, creator_url:{creator_url}, err:{exc}"
+                    f"[TieBaCrawler.get_creators_and_notes_with_task_executor] get creator info error, creator_url:{creator_url}, err:{exc}"
                 )
                 continue
             creator_payload = creator_result.get("creator", {})
@@ -562,7 +562,7 @@ class TieBaCrawler(AbstractCrawler):
                 )
             except TiebaDataFetchError as exc:
                 utils.logger.error(
-                    f"[TieBaCrawler.get_creators_and_notes_with_platform_runner] get creator notes error, creator_url:{creator_url}, err:{exc}"
+                    f"[TieBaCrawler.get_creators_and_notes_with_task_executor] get creator notes error, creator_url:{creator_url}, err:{exc}"
                 )
                 continue
             notes = [TiebaNote.model_validate(item) for item in contents_result.get("items", [])]

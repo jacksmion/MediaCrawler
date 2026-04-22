@@ -93,11 +93,11 @@ class KuaishouCrawler(AbstractCrawler):
         )
 
     @staticmethod
-    def _kuaishou_platform_runner_mode() -> str:
+    def _kuaishou_task_executor_mode() -> str:
         return str(getattr(config, "KUAISHOU_PLATFORM_RUNNER_MODE", "legacy")).strip().lower()
 
-    def _use_platform_runner_for(self, capability: str) -> bool:
-        mode = self._kuaishou_platform_runner_mode()
+    def _use_task_executor_for(self, capability: str) -> bool:
+        mode = self._kuaishou_task_executor_mode()
         if mode == "all":
             return True
         if mode == capability:
@@ -177,8 +177,8 @@ class KuaishouCrawler(AbstractCrawler):
             utils.logger.info("[KuaishouCrawler.start] Kuaishou Crawler finished ...")
 
     async def search(self):
-        if self._use_platform_runner_for("search"):
-            await self.search_with_platform_connector()
+        if self._use_task_executor_for("search"):
+            await self.search_with_task_executor()
             return
         utils.logger.info("[KuaishouCrawler.search] Begin search kuaishou keywords")
         ks_limit_count = 20  # kuaishou limit page fixed value
@@ -234,8 +234,8 @@ class KuaishouCrawler(AbstractCrawler):
 
                 await self.batch_get_video_comments(video_id_list)
 
-    async def search_with_platform_connector(self):
-        utils.logger.info("[KuaishouCrawler.search_with_platform_connector] Begin search kuaishou keywords via platform runner")
+    async def search_with_task_executor(self):
+        utils.logger.info("[KuaishouCrawler.search_with_task_executor] Begin search kuaishou keywords via task executor")
         ks_limit_count = 20
         if config.CRAWLER_MAX_NOTES_COUNT < ks_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = ks_limit_count
@@ -243,11 +243,11 @@ class KuaishouCrawler(AbstractCrawler):
         for keyword in config.KEYWORDS.split(","):
             search_session_id = ""
             source_keyword_var.set(keyword)
-            utils.logger.info(f"[KuaishouCrawler.search_with_platform_connector] Current search keyword: {keyword}")
+            utils.logger.info(f"[KuaishouCrawler.search_with_task_executor] Current search keyword: {keyword}")
             page = 1
             while (page - start_page + 1) * ks_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
-                    utils.logger.info(f"[KuaishouCrawler.search_with_platform_connector] Skip page: {page}")
+                    utils.logger.info(f"[KuaishouCrawler.search_with_task_executor] Skip page: {page}")
                     page += 1
                     continue
                 try:
@@ -259,7 +259,7 @@ class KuaishouCrawler(AbstractCrawler):
                     )
                 except KuaishouDataFetchError as exc:
                     utils.logger.error(
-                        f"[KuaishouCrawler.search_with_platform_connector] search info by keyword:{keyword} err: {exc}"
+                        f"[KuaishouCrawler.search_with_task_executor] search info by keyword:{keyword} err: {exc}"
                     )
                     break
                 video_items = result.get("items", [])
@@ -275,7 +275,7 @@ class KuaishouCrawler(AbstractCrawler):
                 page += 1
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(
-                    f"[KuaishouCrawler.search_with_platform_connector] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
+                    f"[KuaishouCrawler.search_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}"
                 )
                 await self.batch_get_video_comments(video_id_list)
 
@@ -309,8 +309,8 @@ class KuaishouCrawler(AbstractCrawler):
         """Get video detail task"""
         async with semaphore:
             try:
-                if self._use_platform_runner_for("detail"):
-                    return await self.get_video_info_with_platform_runner(video_id)
+                if self._use_task_executor_for("detail"):
+                    return await self.get_video_info_with_task_executor(video_id)
                 result = await self.ks_client.get_video_info(video_id)
 
                 # Sleep after fetching video details
@@ -332,18 +332,18 @@ class KuaishouCrawler(AbstractCrawler):
                 )
                 return None
 
-    async def get_video_info_with_platform_runner(self, video_id: str) -> Optional[Dict]:
+    async def get_video_info_with_task_executor(self, video_id: str) -> Optional[Dict]:
         try:
             result = await self.execute_platform_task(
                 self._new_platform_task(task_type="detail", params={"video_id": video_id})
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[KuaishouCrawler.get_video_info_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}"
+                f"[KuaishouCrawler.get_video_info_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}"
             )
             return result.get("video")
         except KuaishouDataFetchError as ex:
-            utils.logger.error(f"[KuaishouCrawler.get_video_info_with_platform_runner] Get video detail error: {ex}")
+            utils.logger.error(f"[KuaishouCrawler.get_video_info_with_task_executor] Get video detail error: {ex}")
             return None
 
     async def batch_get_video_comments(self, video_id_list: List[str]):
@@ -381,8 +381,8 @@ class KuaishouCrawler(AbstractCrawler):
         """
         async with semaphore:
             try:
-                if self._use_platform_runner_for("comments"):
-                    await self.get_comments_with_platform_runner(video_id)
+                if self._use_task_executor_for("comments"):
+                    await self.get_comments_with_task_executor(video_id)
                     return
                 utils.logger.info(
                     f"[KuaishouCrawler.get_comments] begin get video_id: {video_id} comments ..."
@@ -417,14 +417,14 @@ class KuaishouCrawler(AbstractCrawler):
                     browser_context=self.browser_context
                 )
 
-    async def get_comments_with_platform_runner(self, video_id: str):
+    async def get_comments_with_task_executor(self, video_id: str):
         try:
             utils.logger.info(
-                f"[KuaishouCrawler.get_comments_with_platform_runner] begin get video_id: {video_id} comments ..."
+                f"[KuaishouCrawler.get_comments_with_task_executor] begin get video_id: {video_id} comments ..."
             )
             await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
             utils.logger.info(
-                f"[KuaishouCrawler.get_comments_with_platform_runner] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for video {video_id}"
+                f"[KuaishouCrawler.get_comments_with_task_executor] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for video {video_id}"
             )
             result = await self.execute_platform_task(
                 self._new_platform_task(
@@ -437,7 +437,7 @@ class KuaishouCrawler(AbstractCrawler):
                 await kuaishou_store.batch_update_ks_video_comments(video_id, comments)
         except KuaishouDataFetchError as ex:
             utils.logger.error(
-                f"[KuaishouCrawler.get_comments_with_platform_runner] get video_id: {video_id} comment error: {ex}"
+                f"[KuaishouCrawler.get_comments_with_task_executor] get video_id: {video_id} comment error: {ex}"
             )
 
     async def create_ks_client(self, httpx_proxy: Optional[str]) -> KuaiShouClient:
@@ -532,8 +532,8 @@ class KuaishouCrawler(AbstractCrawler):
 
     async def get_creators_and_videos(self) -> None:
         """Get creator's videos and retrieve their comment information."""
-        if self._use_platform_runner_for("creator"):
-            await self.get_creators_and_videos_with_platform_runner()
+        if self._use_task_executor_for("creator"):
+            await self.get_creators_and_videos_with_task_executor()
             return
         utils.logger.info(
             "[KuaiShouCrawler.get_creators_and_videos] Begin get kuaishou creators"
@@ -565,9 +565,9 @@ class KuaishouCrawler(AbstractCrawler):
             ]
             await self.batch_get_video_comments(video_ids)
 
-    async def get_creators_and_videos_with_platform_runner(self) -> None:
-        """Get creator videos through the new Kuaishou platform runner."""
-        utils.logger.info("[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Begin get kuaishou creators")
+    async def get_creators_and_videos_with_task_executor(self) -> None:
+        """Get creator videos through the Kuaishou task executor."""
+        utils.logger.info("[KuaiShouCrawler.get_creators_and_videos_with_task_executor] Begin get kuaishou creators")
         for creator_url in config.KS_CREATOR_ID_LIST:
             try:
                 creator_info: CreatorUrlInfo = parse_creator_info_from_url(creator_url)
@@ -579,7 +579,7 @@ class KuaishouCrawler(AbstractCrawler):
                 if creator_payload:
                     await kuaishou_store.save_creator(user_id, creator=creator_payload)
             except (ValueError, KuaishouDataFetchError) as e:
-                utils.logger.error(f"[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator: {e}")
+                utils.logger.error(f"[KuaiShouCrawler.get_creators_and_videos_with_task_executor] Failed to fetch creator: {e}")
                 continue
 
             next_cursor = ""
@@ -594,7 +594,7 @@ class KuaishouCrawler(AbstractCrawler):
                     )
                 except KuaishouDataFetchError as e:
                     utils.logger.error(
-                        f"[KuaiShouCrawler.get_creators_and_videos_with_platform_runner] Failed to fetch creator contents: {e}"
+                        f"[KuaiShouCrawler.get_creators_and_videos_with_task_executor] Failed to fetch creator contents: {e}"
                     )
                     break
                 video_items = result.get("items", [])
