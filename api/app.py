@@ -69,7 +69,8 @@ def create_app() -> FastAPI:
             process = await asyncio.create_subprocess_exec(
                 "uv",
                 "run",
-                "main.py",
+                "python",
+                "run_platform_requirement.py",
                 "--help",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

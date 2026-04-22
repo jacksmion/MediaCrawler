@@ -63,6 +63,11 @@ class AbstractCrawler(ABC):
         # Default implementation: fallback to standard mode
         return await self.launch_browser(playwright.chromium, playwright_proxy, user_agent, headless)
 
+    @abstractmethod
+    async def close(self) -> None:
+        """Release crawler runtime resources."""
+        pass
+
 
 class AbstractLogin(ABC):
 

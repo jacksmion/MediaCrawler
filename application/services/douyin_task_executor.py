@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import DouyinPlatformHooks, ExecutionServices
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.douyin import DouyinPlatformHooks
 
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import DouyinCrawlRequirement

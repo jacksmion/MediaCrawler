@@ -16,11 +16,8 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
     if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-import asyncio
-
 import config
-from database import db
-from main import CrawlerFactory
+from application.services.crawler_runtime import CrawlerFactory, cleanup_runtime
 from schemas.tasks.platform_mappings import (
     PLATFORM_CREATOR_LIST_ATTR,
     PLATFORM_DETAIL_LIST_ATTR,
@@ -46,7 +43,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a migrated platform crawl entry.")
     parser.add_argument("--request-json", help="Serialized resolved crawler config payload.")
     parser.add_argument("--platform", choices=list(PLATFORM_RUNNER_MODE_ATTR.keys()))
-    parser.add_argument("--mode", choices=["search", "detail", "creator"])
+    parser.add_argument("--mode", choices=["search", "detail", "creator", "login"])
     parser.add_argument("--login-type", choices=["qrcode", "phone", "cookie"], help="Login type override.")
     parser.add_argument(
         "--save-option",
@@ -254,6 +251,19 @@ async def main() -> None:
     if request_payload:
         _apply_shared_runtime(request_payload)
         crawler = CrawlerFactory.create_crawler(platform=str(request_payload["platform"]))
+        if str(request_payload["crawler_type"]) == "login":
+            await crawler.start()
+            print(
+                json.dumps(
+                    {
+                        "mode": "login_entry",
+                        "request": request_payload,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return
         requirement = _build_requirement(request_payload)
         result = await crawler.start_with_requirement(requirement)
         summary = {
@@ -273,20 +283,7 @@ async def main() -> None:
 
 async def async_cleanup() -> None:
     global crawler
-    if crawler and hasattr(crawler, "close"):
-        await crawler.close()
-    elif crawler and getattr(crawler, "cdp_manager", None):
-        try:
-            await crawler.cdp_manager.cleanup(force=True)
-        except Exception:
-            pass
-    elif crawler and getattr(crawler, "browser_context", None):
-        try:
-            await crawler.browser_context.close()
-        except Exception:
-            pass
-    if config.SAVE_DATA_OPTION in ("db", "sqlite"):
-        await db.close()
+    await cleanup_runtime(crawler)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from runtime.storage.persistence import append_event_snapshot, uses_runtime_database_backend
 from schemas.tasks.models import CrawlJobEvent
 
 
@@ -14,6 +15,9 @@ class EventService:
 
     async def append(self, event: CrawlJobEvent, platform_code: str) -> Path:
         """Append an event to a platform-scoped JSONL file."""
+        if uses_runtime_database_backend():
+            await append_event_snapshot(event, platform_code)
+            return self.base_dir
         target_dir = self.base_dir / platform_code
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / f"{event.event_type}.jsonl"
@@ -27,4 +31,3 @@ class EventService:
         with file_path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(payload, ensure_ascii=False) + "\n")
         return file_path
-

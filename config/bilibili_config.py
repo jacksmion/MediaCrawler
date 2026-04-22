@@ -18,7 +18,7 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 # bilili platform configuration
 
-BILIBILI_PLATFORM_RUNNER_MODE = "legacy"
+BILIBILI_PLATFORM_RUNNER_MODE = "all"
 
 ENABLE_BILIBILI_CONNECTOR_SEARCH = False
 ENABLE_BILIBILI_CONNECTOR_DETAIL = False

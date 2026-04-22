@@ -31,7 +31,7 @@ SEARCH_SORT_TYPE = 2
 #
 # The legacy ENABLE_DOUYIN_CONNECTOR_* flags below are still supported for
 # backward compatibility. This mode takes precedence when it is not "legacy".
-DOUYIN_PLATFORM_RUNNER_MODE = "legacy"
+DOUYIN_PLATFORM_RUNNER_MODE = "all"
 
 # Whether to route Douyin search through the new platform connector bridge.
 # This keeps legacy detail/comment logic intact while we migrate incrementally.

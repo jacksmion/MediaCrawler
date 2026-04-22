@@ -4,6 +4,10 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from runtime.storage.persistence import (
+    upsert_normalized_content_record,
+    uses_runtime_database_backend,
+)
 from schemas.normalized.entities import ContentRecord
 
 
@@ -17,6 +21,10 @@ class NormalizedContentService:
         """Append a batch of normalized records grouped by platform."""
         if not records:
             return None
+        if uses_runtime_database_backend():
+            for record in records:
+                await upsert_normalized_content_record(record)
+            return None
         platform_code = records[0].platform_code
         target_dir = self.base_dir / platform_code
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -28,4 +36,3 @@ class NormalizedContentService:
                     payload["published_at"] = record.published_at.isoformat()
                 file.write(json.dumps(payload, ensure_ascii=False) + "\n")
         return file_path
-

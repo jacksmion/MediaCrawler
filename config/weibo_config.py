@@ -20,14 +20,14 @@
 
 # Weibo platform configuration
 
-WEIBO_PLATFORM_RUNNER_MODE = "legacy"
+WEIBO_PLATFORM_RUNNER_MODE = "all"
 
 ENABLE_WEIBO_CONNECTOR_SEARCH = False
 ENABLE_WEIBO_CONNECTOR_DETAIL = False
 ENABLE_WEIBO_CONNECTOR_COMMENTS = False
 ENABLE_WEIBO_CONNECTOR_CREATOR = False
 
-# Search type, the specific enumeration value is in media_platform/weibo/field.py
+# Search type, the specific enumeration value is in connectors/weibo/fields.py
 WEIBO_SEARCH_TYPE = "default"
 
 # Specify Weibo ID list

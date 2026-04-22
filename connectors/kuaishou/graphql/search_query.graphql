@@ -1,0 +1,25 @@
+query visionSearchPhoto($keyword: String, $pcursor: String, $searchSessionId: String, $page: String) {
+  visionSearchPhoto(keyword: $keyword, pcursor: $pcursor, searchSessionId: $searchSessionId, page: $page) {
+    result
+    searchSessionId
+    feeds {
+      type
+      author {
+        id
+        name
+        avatar
+      }
+      photo {
+        id
+        caption
+        coverUrl
+        duration
+      }
+      statistics {
+        likeCount
+        commentCount
+        viewCount
+      }
+    }
+  }
+}

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import ExecutionServices, KuaishouPlatformHooks
-from media_platform.kuaishou.help import parse_video_info_from_url
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.kuaishou import KuaishouPlatformHooks
+from connectors.kuaishou.helpers import parse_video_info_from_url
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import KuaishouCrawlRequirement
 

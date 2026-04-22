@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import ExecutionServices, ZhihuPlatformHooks
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.zhihu import ZhihuPlatformHooks
 from constant import zhihu as zhihu_constant
 from model.m_zhihu import ZhihuContent
 from schemas.tasks.models import CrawlTask

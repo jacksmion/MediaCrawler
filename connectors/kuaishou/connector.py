@@ -236,5 +236,5 @@ class KuaishouConnector(BaseConnector):
             "vision_profile": "vision_profile.graphql",
             "vision_profile_photo_list": "vision_profile_photo_list.graphql",
         }
-        file_path = Path("media_platform") / "kuaishou" / "graphql" / mapping[name]
+        file_path = Path("connectors") / "kuaishou" / "graphql" / mapping[name]
         return file_path.read_text(encoding="utf-8")

@@ -7,12 +7,12 @@ from urllib.parse import quote, urlencode
 from connectors.base.base_connector import BaseConnector
 from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
 from constant import baidu_tieba as tieba_constant
-from media_platform.tieba.help import TieBaExtractor
 from model.m_baidu_tieba import TiebaCreator, TiebaNote
 from runtime.browser.executor import BrowserExecutor
 from runtime.session.service import SessionService
 
 from .errors import TiebaDataFetchError
+from .helpers import TieBaExtractor
 
 
 class TiebaConnector(BaseConnector):

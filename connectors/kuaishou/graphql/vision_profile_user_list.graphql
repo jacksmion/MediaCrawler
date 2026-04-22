@@ -1,0 +1,9 @@
+query visionProfileUserList($pcursor: String, $searchKey: String) {
+  visionProfileUserList(pcursor: $pcursor, searchKey: $searchKey) {
+    pcursor
+    list {
+      userId
+      userName
+    }
+  }
+}

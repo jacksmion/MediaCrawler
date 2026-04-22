@@ -1,0 +1,15 @@
+query visionCommentList($photoId: String, $pcursor: String, $page: String) {
+  visionCommentList(photoId: $photoId, pcursor: $pcursor, page: $page) {
+    rootComments {
+      commentId
+      authorId
+      authorName
+      headurl
+      content
+      timestamp
+      likedCount
+      subCommentCount
+    }
+    pcursor
+  }
+}

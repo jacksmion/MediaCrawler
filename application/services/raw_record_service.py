@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from runtime.storage.persistence import append_raw_record, uses_runtime_database_backend
 from schemas.tasks.models import RawRecord
 
 
@@ -14,6 +15,9 @@ class RawRecordService:
 
     async def append(self, record: RawRecord) -> Path:
         """Append a raw record to a JSONL archive file grouped by platform and type."""
+        if uses_runtime_database_backend():
+            await append_raw_record(record)
+            return self.base_dir
         target_dir = self.base_dir / record.platform_code
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / f"{record.record_type}.jsonl"

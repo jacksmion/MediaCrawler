@@ -6,14 +6,14 @@ from urllib.parse import parse_qs, unquote
 
 from connectors.base.base_connector import BaseConnector
 from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
-from media_platform.weibo.field import SearchType
-from media_platform.weibo.help import filter_search_result_card
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
 from runtime.http.models import HttpRequest
 from runtime.session.service import SessionService
 
 from .errors import WeiboDataFetchError
+from .fields import SearchType
+from .helpers import filter_search_result_card
 
 
 class WeiboConnector(BaseConnector):

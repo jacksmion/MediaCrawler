@@ -44,7 +44,7 @@ class DouyinSigner:
         query_string = urllib.parse.urlencode(merged)
         post_data = merged if request_method.upper() == "POST" else {}
         if "/v1/web/general/search" not in uri:
-            from media_platform.douyin.help import get_a_bogus
+            from connectors.douyin.helpers import get_a_bogus
 
             merged["a_bogus"] = await get_a_bogus(uri, query_string, post_data, user_agent, page)
         return merged

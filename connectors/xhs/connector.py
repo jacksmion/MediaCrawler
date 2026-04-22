@@ -4,12 +4,12 @@ from typing import Any
 
 from connectors.base.base_connector import BaseConnector
 from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
-from media_platform.xhs.field import SearchSortType
-from media_platform.xhs.help import parse_creator_info_from_url
 from runtime.browser.executor import BrowserExecutor
 from runtime.session.service import SessionService
 
 from .errors import XhsDataFetchError
+from .fields import SearchSortType
+from .helpers import parse_creator_info_from_url
 
 
 class XhsConnector(BaseConnector):

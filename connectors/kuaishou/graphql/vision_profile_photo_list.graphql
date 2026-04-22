@@ -1,0 +1,24 @@
+query visionProfilePhotoList($userId: String, $pcursor: String, $page: String) {
+  visionProfilePhotoList(userId: $userId, pcursor: $pcursor, page: $page) {
+    pcursor
+    feeds {
+      type
+      author {
+        id
+        name
+        avatar
+      }
+      photo {
+        id
+        caption
+        coverUrl
+        duration
+      }
+      statistics {
+        likeCount
+        commentCount
+        viewCount
+      }
+    }
+  }
+}

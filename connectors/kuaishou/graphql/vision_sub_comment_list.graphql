@@ -1,0 +1,12 @@
+query visionSubCommentList($photoId: String, $rootCommentId: String, $pcursor: String) {
+  visionSubCommentList(photoId: $photoId, rootCommentId: $rootCommentId, pcursor: $pcursor) {
+    pcursor
+    subComments {
+      commentId
+      authorId
+      authorName
+      content
+      timestamp
+    }
+  }
+}

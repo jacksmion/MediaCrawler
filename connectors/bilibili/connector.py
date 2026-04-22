@@ -4,14 +4,14 @@ from typing import Any
 
 from connectors.base.base_connector import BaseConnector
 from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
-from media_platform.bilibili.field import CommentOrderType, SearchOrderType
-from media_platform.bilibili.help import BilibiliSign
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
 from runtime.http.models import HttpRequest
 from runtime.session.service import SessionService
 
 from .errors import BilibiliDataFetchError
+from .fields import CommentOrderType, SearchOrderType
+from .helpers import BilibiliSign
 
 
 class BilibiliConnector(BaseConnector):

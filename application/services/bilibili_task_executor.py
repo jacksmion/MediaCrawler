@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import BilibiliPlatformHooks, ExecutionServices
-from media_platform.bilibili.help import parse_video_info_from_url
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.bilibili import BilibiliPlatformHooks
+from connectors.bilibili.helpers import parse_video_info_from_url
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import BilibiliCrawlRequirement
 

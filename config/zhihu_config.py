@@ -28,7 +28,7 @@
 #
 # The legacy ENABLE_ZHIHU_CONNECTOR_* flags below are still supported for
 # backward compatibility. This mode takes precedence when it is not "legacy".
-ZHIHU_PLATFORM_RUNNER_MODE = "legacy"
+ZHIHU_PLATFORM_RUNNER_MODE = "all"
 
 ENABLE_ZHIHU_CONNECTOR_SEARCH = False
 ENABLE_ZHIHU_CONNECTOR_DETAIL = False

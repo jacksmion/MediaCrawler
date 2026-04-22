@@ -1,0 +1,13 @@
+query visionProfile($userId: String) {
+  visionProfile(userId: $userId) {
+    userProfile {
+      userId
+      userName
+      userText
+      headurl
+      fan
+      follow
+      photo_public
+    }
+  }
+}

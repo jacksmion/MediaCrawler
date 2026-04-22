@@ -5,6 +5,12 @@ from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
+from runtime.storage.persistence import (
+    append_job_snapshot,
+    append_result_snapshot,
+    append_task_snapshot,
+    uses_runtime_database_backend,
+)
 from schemas.tasks.models import CrawlJob, CrawlTask
 from schemas.tasks.runtime import PlatformTaskResult
 
@@ -35,6 +41,9 @@ class CrawlStateService:
             priority=priority,
             params=params,
         )
+        if uses_runtime_database_backend():
+            await append_task_snapshot(task)
+            return task
         await self._append_snapshot(platform_code, "tasks", self._serialize_task(task))
         return task
 
@@ -53,6 +62,9 @@ class CrawlStateService:
             status="queued",
             batch_id=batch_id,
         )
+        if uses_runtime_database_backend():
+            await append_job_snapshot(job)
+            return job
         await self._append_snapshot(task.platform_code, "jobs", self._serialize_job(job))
         return job
 
@@ -63,6 +75,9 @@ class CrawlStateService:
             status="running",
             started_at=job.started_at or datetime.utcnow(),
         )
+        if uses_runtime_database_backend():
+            await append_job_snapshot(running_job)
+            return running_job
         await self._append_snapshot(job.platform_code, "jobs", self._serialize_job(running_job))
         return running_job
 
@@ -81,6 +96,9 @@ class CrawlStateService:
             error_code=None,
             error_message="",
         )
+        if uses_runtime_database_backend():
+            await append_job_snapshot(succeeded_job)
+            return succeeded_job
         await self._append_snapshot(job.platform_code, "jobs", self._serialize_job(succeeded_job))
         return succeeded_job
 
@@ -101,11 +119,17 @@ class CrawlStateService:
             error_message=error_message,
             metrics=metrics or job.metrics,
         )
+        if uses_runtime_database_backend():
+            await append_job_snapshot(failed_job)
+            return failed_job
         await self._append_snapshot(job.platform_code, "jobs", self._serialize_job(failed_job))
         return failed_job
 
     async def append_result(self, result: PlatformTaskResult) -> Path:
         """Persist a platform task execution result snapshot."""
+        if uses_runtime_database_backend():
+            await append_result_snapshot(result)
+            return self.base_dir
         payload = {
             "job_id": result.job_id,
             "platform_code": result.platform_code,

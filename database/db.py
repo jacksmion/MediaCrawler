@@ -31,6 +31,7 @@ if str(project_root) not in sys.path:
 
 from tools import utils
 from database.db_session import create_tables
+from database.db_session import dispose_engines
 
 async def init_table_schema(db_type: str):
     """
@@ -50,4 +51,10 @@ async def close():
     """
     Placeholder for closing database connections if needed in the future.
     """
-    pass
+    await dispose_engines()
+    try:
+        from database.mongodb_store_base import MongoDBConnection
+
+        await MongoDBConnection().close()
+    except Exception:
+        pass

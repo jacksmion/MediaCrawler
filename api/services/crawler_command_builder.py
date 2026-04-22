@@ -8,38 +8,38 @@ from ..schemas import CrawlerStartRequest, ResolvedCrawlerConfig
 
 
 class CrawlerCommandBuilder:
-    """Builds `main.py` command lines from crawler start requests."""
+    """Builds `run_platform_requirement.py` command lines from crawler start requests."""
 
     def build(self, config: CrawlerStartRequest | ResolvedCrawlerConfig) -> list[str]:
-        """Build main.py command line arguments."""
-        cmd = ["uv", "run", "python", "main.py"]
+        """Build run_platform_requirement.py command line arguments."""
+        cmd = ["uv", "run", "python", "run_platform_requirement.py"]
 
         cmd.extend(["--platform", config.platform.value])
-        cmd.extend(["--lt", config.login_type.value])
-        cmd.extend(["--type", config.crawler_type.value])
-        cmd.extend(["--save_data_option", config.save_option.value])
+        cmd.extend(["--login-type", config.login_type.value])
+        cmd.extend(["--mode", config.crawler_type.value])
+        cmd.extend(["--save-option", config.save_option.value])
 
         if config.crawler_type.value == "search" and config.keywords:
-            cmd.extend(["--keywords", config.keywords])
+            for keyword in [item.strip() for item in config.keywords.split(",") if item.strip()]:
+                cmd.extend(["--keyword", keyword])
         elif config.crawler_type.value == "detail" and config.specified_ids:
-            cmd.extend(["--specified_id", config.specified_ids])
+            for specified_id in [item.strip() for item in config.specified_ids.split(",") if item.strip()]:
+                cmd.extend(["--specified-id", specified_id])
         elif config.crawler_type.value == "creator" and config.creator_ids:
-            cmd.extend(["--creator_id", config.creator_ids])
+            for creator_id in [item.strip() for item in config.creator_ids.split(",") if item.strip()]:
+                cmd.extend(["--creator-id", creator_id])
 
         if config.start_page != 1:
-            cmd.extend(["--start", str(config.start_page)])
+            cmd.extend(["--start-page", str(config.start_page)])
 
-        cmd.extend(["--get_comment", "true" if config.enable_comments else "false"])
-        cmd.extend(["--get_sub_comment", "true" if config.enable_sub_comments else "false"])
+        if config.enable_comments:
+            cmd.append("--include-comments")
 
         if config.cookies:
             cmd.extend(["--cookies", config.cookies])
 
         if config.sort_type:
-            cmd.extend(["--sort", config.sort_type])
-
-        if config.comment_time_filter_h > 0:
-            cmd.extend(["--comment_time_filter_h", str(config.comment_time_filter_h)])
+            cmd.extend(["--sort-type", config.sort_type])
 
         cmd.extend(["--headless", "true" if config.headless else "false"])
         return cmd

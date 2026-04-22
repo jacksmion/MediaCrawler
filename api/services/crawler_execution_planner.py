@@ -28,14 +28,9 @@ class CrawlerExecutionPlanner:
 
     def build_plan(self, config: ResolvedCrawlerConfig) -> CrawlerExecutionPlan:
         """Build an execution plan for the given resolved config."""
-        if self._supports_platform_requirement_entry(config):
-            return CrawlerExecutionPlan(
-                mode="platform_requirement",
-                command=self._build_platform_requirement_command(config),
-            )
         return CrawlerExecutionPlan(
-            mode="legacy_main",
-            command=self.fallback_command_builder.build(config),
+            mode="platform_requirement",
+            command=self._build_platform_requirement_command(config),
         )
 
     @staticmethod
@@ -50,7 +45,7 @@ class CrawlerExecutionPlanner:
                 PlatformEnum.TIEBA,
                 PlatformEnum.ZHIHU,
             }
-            and config.crawler_type in {CrawlerTypeEnum.SEARCH, CrawlerTypeEnum.DETAIL, CrawlerTypeEnum.CREATOR}
+            and config.crawler_type in {CrawlerTypeEnum.SEARCH, CrawlerTypeEnum.DETAIL, CrawlerTypeEnum.CREATOR, CrawlerTypeEnum.LOGIN}
         )
 
     @staticmethod

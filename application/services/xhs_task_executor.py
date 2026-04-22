@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import ExecutionServices, XhsPlatformHooks
-from media_platform.xhs.help import parse_note_info_from_note_url
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.xhs import XhsPlatformHooks
+from connectors.xhs.helpers import parse_note_info_from_note_url
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import XhsCrawlRequirement
 

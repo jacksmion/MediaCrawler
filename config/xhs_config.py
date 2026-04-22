@@ -20,7 +20,7 @@
 
 # Xiaohongshu platform configuration
 
-# Sorting method, the specific enumeration value is in media_platform/xhs/field.py
+# Sorting method, the specific enumeration value is in connectors/xhs/fields.py
 SORT_TYPE = "popularity_descending"
 
 # Specify the note URL list, which must carry the xsec_token parameter
@@ -37,7 +37,7 @@ XHS_CREATOR_ID_LIST = [
 ]
 
 # Incremental migrated runner switches.
-XHS_PLATFORM_RUNNER_MODE = "legacy"
+XHS_PLATFORM_RUNNER_MODE = "all"
 ENABLE_XHS_CONNECTOR_SEARCH = False
 ENABLE_XHS_CONNECTOR_DETAIL = False
 ENABLE_XHS_CONNECTOR_COMMENTS = False

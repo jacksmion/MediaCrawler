@@ -13,7 +13,7 @@ from .crawler_executor import CrawlerExecutor
 
 
 class SubprocessCrawlerExecutor(CrawlerExecutor):
-    """Runs crawlers through the existing `main.py` subprocess entrypoint."""
+    """Runs crawlers through the `run_platform_requirement.py` subprocess entrypoint."""
 
     async def start(
         self,

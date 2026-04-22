@@ -1,0 +1,22 @@
+query visionVideoDetail($photoId: String, $page: String) {
+  visionVideoDetail(photoId: $photoId, page: $page) {
+    photo {
+      id
+      caption
+      coverUrl
+      duration
+      userId
+    }
+    author {
+      id
+      name
+      avatar
+    }
+    statistics {
+      likeCount
+      commentCount
+      viewCount
+      shareCount
+    }
+  }
+}

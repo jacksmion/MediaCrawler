@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks import ExecutionServices, WeiboPlatformHooks
+from application.platform_hooks.base import ExecutionServices
+from application.platform_hooks.weibo import WeiboPlatformHooks
 
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import WeiboCrawlRequirement

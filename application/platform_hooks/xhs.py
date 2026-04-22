@@ -5,7 +5,7 @@ from typing import Any
 from connectors.xhs import build_xhs_connector_from_legacy
 from connectors.xhs.errors import XhsDataFetchError
 from connectors.xhs.normalizer import normalize_xhs_note, normalize_xhs_notes
-from media_platform.xhs.help import get_search_id, parse_note_info_from_note_url
+from connectors.xhs.helpers import get_search_id, parse_note_info_from_note_url
 from schemas.tasks.models import CrawlJobEvent, CrawlTask, RawRecord
 from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 

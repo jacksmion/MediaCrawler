@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 from connectors.base.base_connector import BaseConnector
 from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
 from constant import zhihu as zhihu_constant
-from media_platform.zhihu.help import ZhihuExtractor, judge_zhihu_url, sign
 from model.m_zhihu import ZhihuContent
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
@@ -14,6 +13,7 @@ from runtime.http.models import HttpRequest
 from runtime.session.service import SessionService
 
 from .errors import ZhihuDataFetchError
+from .helpers import ZhihuExtractor, judge_zhihu_url, sign
 
 
 class ZhihuConnector(BaseConnector):

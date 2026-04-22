@@ -84,6 +84,14 @@ async def create_tables(db_type: str = None):
             await conn.run_sync(Base.metadata.create_all)
 
 
+async def dispose_engines() -> None:
+    engine_keys = list(_engines.keys())
+    for key in engine_keys:
+        engine = _engines.pop(key, None)
+        if engine is not None:
+            await engine.dispose()
+
+
 @asynccontextmanager
 async def get_session() -> AsyncSession:
     engine = get_async_engine(config.SAVE_DATA_OPTION)
