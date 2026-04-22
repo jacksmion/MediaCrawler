@@ -9,6 +9,7 @@ from .event_service import EventService
 from .normalized_content_service import NormalizedContentService
 from .platform_task_service import PlatformTaskService
 from .raw_record_service import RawRecordService
+from .tieba_platform_runner import TiebaPlatformRunner
 from .zhihu_platform_runner import ZhihuPlatformRunner
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "NormalizedContentService",
     "PlatformTaskService",
     "RawRecordService",
+    "TiebaPlatformRunner",
     "ZhihuPlatformRunner",
 ]
