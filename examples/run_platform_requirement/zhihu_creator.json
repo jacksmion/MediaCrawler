@@ -1,0 +1,12 @@
+{
+  "platform": "zhihu",
+  "crawler_type": "creator",
+  "login_type": "qrcode",
+  "save_option": "jsonl",
+  "headless": false,
+  "creator_ids": [
+    "https://www.zhihu.com/people/example-user"
+  ],
+  "enable_comments": false,
+  "comment_limit": 10
+}

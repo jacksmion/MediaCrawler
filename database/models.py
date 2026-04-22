@@ -465,7 +465,7 @@ class RuntimeNormalizedContent(Base):
     author_platform_id = Column(String(255), comment="作者平台ID")
     published_at = Column(String(64), comment="发布时间")
     raw_payload = Column(Text, comment="原始负载")
-    metadata = Column(Text, comment="元数据")
+    metadata_json = Column("metadata", Text, comment="元数据")
     add_ts = Column(BigInteger, comment="添加时间戳")
     last_modify_ts = Column(BigInteger, comment="最后修改时间戳")
 
@@ -482,7 +482,7 @@ class RuntimeRawRecord(Base):
     request_meta = Column(Text, comment="请求元数据")
     response_body = Column(Text, comment="响应体")
     content_hash = Column(String(255), comment="内容哈希")
-    metadata = Column(Text, comment="元数据")
+    metadata_json = Column("metadata", Text, comment="元数据")
     add_ts = Column(BigInteger, comment="添加时间戳")
 
 

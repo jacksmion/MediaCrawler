@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import io
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
 import json
+from pathlib import Path
 import sys
 from typing import Any
 
@@ -37,6 +39,18 @@ from tools.app_runner import run
 
 
 crawler = None
+
+
+def _json_default(value: Any) -> Any:
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, set):
+        return list(value)
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -78,7 +92,16 @@ def _split_csv(value: Any) -> list[str]:
 def _parse_request_payload(args: argparse.Namespace) -> dict[str, Any]:
     if not args.request_json:
         return {}
-    payload = json.loads(args.request_json)
+    raw_value = str(args.request_json).strip()
+    if not raw_value:
+        return {}
+
+    request_path = Path(raw_value)
+    if request_path.exists() and request_path.is_file():
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
+    else:
+        payload = json.loads(raw_value)
+
     if not isinstance(payload, dict):
         raise ValueError("--request-json must decode to an object")
     return payload
@@ -261,6 +284,7 @@ async def main() -> None:
                     },
                     ensure_ascii=False,
                     indent=2,
+                    default=_json_default,
                 )
             )
             return
@@ -272,13 +296,13 @@ async def main() -> None:
             "requirement": asdict(requirement),
             "result": result,
         }
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print(json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default))
         return
 
     _apply_runtime_overrides(args)
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
-    print(json.dumps(_summarize(args), ensure_ascii=False, indent=2))
+    print(json.dumps(_summarize(args), ensure_ascii=False, indent=2, default=_json_default))
 
 
 async def async_cleanup() -> None:

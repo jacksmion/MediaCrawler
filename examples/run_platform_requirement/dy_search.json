@@ -1,0 +1,15 @@
+{
+  "platform": "dy",
+  "crawler_type": "search",
+  "login_type": "qrcode",
+  "save_option": "jsonl",
+  "headless": false,
+  "keywords": [
+    "张家界"
+  ],
+  "start_page": 1,
+  "max_pages": 1,
+  "sort_type": "0",
+  "enable_comments": false,
+  "comment_limit": 10
+}

@@ -144,6 +144,10 @@ class ConnectorCrawlerBase(AbstractCrawler):
             await self._ensure_persistence_ready()
             await self.task_executor.execute_requirement(self._build_requirement_from_runtime_config())
 
+    async def search(self) -> None:
+        """Backward-compatible entry required by AbstractCrawler."""
+        await self.start()
+
     async def start_with_requirement(self, requirement) -> dict[str, Any]:
         async with async_playwright() as playwright:
             await self._initialize_runtime(playwright)

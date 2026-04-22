@@ -213,7 +213,7 @@ async def upsert_normalized_content_record(record: ContentRecord) -> None:
                         author_platform_id=record.author_platform_id,
                         published_at=published_at,
                         raw_payload=_to_json(record.raw_payload),
-                        metadata=_to_json(record.metadata),
+                        metadata_json=_to_json(record.metadata),
                         add_ts=add_ts,
                         last_modify_ts=add_ts,
                     )
@@ -226,7 +226,7 @@ async def upsert_normalized_content_record(record: ContentRecord) -> None:
                 existing.author_platform_id = record.author_platform_id
                 existing.published_at = published_at
                 existing.raw_payload = _to_json(record.raw_payload)
-                existing.metadata = _to_json(record.metadata)
+                existing.metadata_json = _to_json(record.metadata)
                 existing.last_modify_ts = add_ts
         return
     if uses_mongo_backend():
@@ -246,7 +246,7 @@ async def append_raw_record(record: RawRecord) -> None:
                     request_meta=_to_json(record.request_meta),
                     response_body=_to_json(record.response_body),
                     content_hash=record.content_hash,
-                    metadata=_to_json(record.metadata),
+                    metadata_json=_to_json(record.metadata),
                     add_ts=_utc_timestamp(),
                 )
             )
