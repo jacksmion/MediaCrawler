@@ -26,15 +26,7 @@ from schemas.tasks.platform_mappings import (
     PLATFORM_RUNNER_MODE_ATTR,
     PLATFORM_SEARCH_PAGE_HINTS,
 )
-from schemas.tasks.requirements import (
-    BilibiliCrawlRequirement,
-    DouyinCrawlRequirement,
-    KuaishouCrawlRequirement,
-    TiebaCrawlRequirement,
-    WeiboCrawlRequirement,
-    XhsCrawlRequirement,
-    ZhihuCrawlRequirement,
-)
+from schemas.tasks.requirements import CrawlRequirement
 from tools.app_runner import run
 
 
@@ -182,7 +174,8 @@ def _build_requirement(payload: dict[str, Any]) -> Any:
     }
 
     if platform == "xhs":
-        return XhsCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             note_urls=specified_ids,
             creator_urls=creator_ids,
@@ -190,7 +183,8 @@ def _build_requirement(payload: dict[str, Any]) -> Any:
             **shared,
         )
     if platform == "dy":
-        return DouyinCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             aweme_ids=specified_ids,
             creator_ids=creator_ids,
@@ -198,7 +192,8 @@ def _build_requirement(payload: dict[str, Any]) -> Any:
             **shared,
         )
     if platform == "wb":
-        return WeiboCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             note_ids=specified_ids,
             creator_ids=creator_ids,
@@ -206,28 +201,32 @@ def _build_requirement(payload: dict[str, Any]) -> Any:
             **shared,
         )
     if platform == "bili":
-        return BilibiliCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             video_ids=specified_ids,
             creator_ids=creator_ids,
             **shared,
         )
     if platform == "ks":
-        return KuaishouCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             video_ids=specified_ids,
             creator_ids=creator_ids,
             **shared,
         )
     if platform == "tieba":
-        return TiebaCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             note_ids=specified_ids,
             creator_urls=creator_ids,
             **shared,
         )
     if platform == "zhihu":
-        return ZhihuCrawlRequirement(
+        return CrawlRequirement(
+            platform_code=platform,
             keywords=keywords,
             note_urls=specified_ids,
             creator_urls=creator_ids,

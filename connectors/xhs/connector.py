@@ -20,7 +20,9 @@ from schemas.tasks.models import CrawlJobEvent, CrawlTask
 from schemas.tasks.runtime import PlatformTaskRequest
 from runtime.browser.executor import BrowserExecutor
 from runtime.session.service import SessionService
+from tools import utils
 
+from .client import XiaoHongShuClient
 from .errors import XhsDataFetchError
 from .fields import SearchSortType
 from .helpers import get_search_id, parse_creator_info_from_url, parse_note_info_from_note_url
@@ -38,6 +40,10 @@ class XhsConnector(BaseConnector):
         *,
         browser_executor: BrowserExecutor,
         session_service: SessionService,
+        browser_context=None,
+        context_page=None,
+        proxy: str | None = None,
+        proxy_ip_pool=None,
         legacy_client=None,
     ) -> None:
         super().__init__(
@@ -55,11 +61,16 @@ class XhsConnector(BaseConnector):
         )
         self.browser_executor = browser_executor
         self.session_service = session_service
+        self.browser_context = browser_context
+        self.context_page = context_page
+        self.proxy = proxy
+        self.proxy_ip_pool = proxy_ip_pool
         self.legacy_client = legacy_client
         self.context: ConnectorContext | None = None
 
     async def prepare(self, context: ConnectorContext) -> None:
         self.context = context
+        await self._ensure_legacy_client()
 
     async def authenticate(self, auth_context: AuthContext) -> AuthResult:
         return AuthResult(
@@ -559,6 +570,43 @@ class XhsConnector(BaseConnector):
             raise XhsDataFetchError("XHS legacy client is not ready; browser runtime has not been initialized.")
         return self.legacy_client
 
+    async def _ensure_legacy_client(self) -> None:
+        if self.browser_context is None or self.context_page is None:
+            raise XhsDataFetchError("XHS browser runtime is not initialized.")
+        if self.legacy_client is None:
+            self.legacy_client = await self._build_legacy_client()
+            return
+        await self.legacy_client.update_cookies(browser_context=self.browser_context)
+
+    async def _build_legacy_client(self) -> XiaoHongShuClient:
+        if self.browser_context is None or self.context_page is None:
+            raise XhsDataFetchError("XHS browser runtime is not initialized.")
+        cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies())
+        return XiaoHongShuClient(
+            proxy=self.proxy,
+            headers={
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "zh-CN,zh;q=0.9",
+                "cache-control": "no-cache",
+                "content-type": "application/json;charset=UTF-8",
+                "origin": "https://www.xiaohongshu.com",
+                "pragma": "no-cache",
+                "priority": "u=1, i",
+                "referer": "https://www.xiaohongshu.com/",
+                "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-site",
+                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+                "Cookie": cookie_str,
+            },
+            playwright_page=self.context_page,
+            cookie_dict=cookie_dict,
+            proxy_ip_pool=self.proxy_ip_pool,
+        )
+
     @staticmethod
     def _resolve_detail_params(params: dict[str, Any]) -> tuple[str, str, str]:
         note_url = str(params.get("note_url") or "")
@@ -615,5 +663,8 @@ def build_xhs_connector_from_legacy(crawler) -> XhsConnector:
     return XhsConnector(
         browser_executor=browser_executor,
         session_service=session_service,
-        legacy_client=getattr(crawler, "xhs_client", None),
+        browser_context=getattr(crawler, "browser_context", None),
+        context_page=getattr(crawler, "context_page", None),
+        proxy=getattr(crawler, "_platform_http_proxy", None),
+        proxy_ip_pool=getattr(crawler, "ip_proxy_pool", None),
     )

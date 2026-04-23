@@ -13,19 +13,8 @@ import config
 from base.base_crawler import AbstractCrawler
 from database import db
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
-from schemas.tasks.requirements import (
-    BilibiliCrawlRequirement,
-    DouyinCrawlRequirement,
-    KuaishouCrawlRequirement,
-    TiebaCrawlRequirement,
-    WeiboCrawlRequirement,
-    XhsCrawlRequirement,
-    ZhihuCrawlRequirement,
-)
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
-
-from connectors.xhs.client import XiaoHongShuClient
 
 from .platform_logins import BilibiliLogin, DouYinLogin, KuaishouLogin, BaiduTieBaLogin, WeiboLogin, XiaoHongShuLogin, ZhiHuLogin
 
@@ -33,12 +22,9 @@ from .crawl_state_service import CrawlStateService
 from .event_service import EventService
 from .normalized_content_service import NormalizedContentService
 from .raw_record_service import RawRecordService
+from .runtime_requirement_mapper import build_requirement_from_runtime_config
 from runtime.storage.persistence import uses_relational_backend
 from connectors import build_connector_from_runtime
-
-
-def _split_csv(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 class ConnectorCrawlerBase(AbstractCrawler):
@@ -82,7 +68,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
         )
 
     def _build_requirement_from_runtime_config(self):
-        raise NotImplementedError
+        return build_requirement_from_runtime_config(self.platform_name)
 
     def _build_connector_for_health_check(self):
         return self._build_runtime_connector()
@@ -254,114 +240,12 @@ class XhsConnectorCrawler(ConnectorCrawlerBase):
     user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     login_cls = XiaoHongShuLogin
 
-    def __init__(self) -> None:
-        self.xhs_client: XiaoHongShuClient | None = None
-        super().__init__()
-
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    async def _after_page_ready(self, httpx_proxy: str | None) -> None:
-        if self.browser_context is None or self.context_page is None:
-            raise RuntimeError("XHS runtime is not initialized")
-        cookie_str, cookie_dict = utils.convert_cookies(await self.browser_context.cookies())
-        self.xhs_client = XiaoHongShuClient(
-            proxy=httpx_proxy,
-            headers={
-                "accept": "application/json, text/plain, */*",
-                "accept-language": "zh-CN,zh;q=0.9",
-                "cache-control": "no-cache",
-                "content-type": "application/json;charset=UTF-8",
-                "origin": "https://www.xiaohongshu.com",
-                "pragma": "no-cache",
-                "priority": "u=1, i",
-                "referer": "https://www.xiaohongshu.com/",
-                "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-site",
-                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-                "Cookie": cookie_str,
-            },
-            playwright_page=self.context_page,
-            cookie_dict=cookie_dict,
-            proxy_ip_pool=self.ip_proxy_pool,
-        )
-
-    async def _after_login(self) -> None:
-        if self.xhs_client is not None and self.browser_context is not None:
-            await self.xhs_client.update_cookies(browser_context=self.browser_context)
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> XhsCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return XhsCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 20),
-                sort_type=str(config.SORT_TYPE or "general"),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return XhsCrawlRequirement(
-                mode="detail",
-                note_urls=list(getattr(config, "XHS_SPECIFIED_NOTE_URL_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return XhsCrawlRequirement(
-            mode="creator",
-            creator_urls=list(getattr(config, "XHS_CREATOR_ID_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
-
 
 class DouyinConnectorCrawler(ConnectorCrawlerBase):
     platform_name = "douyin"
     index_url = "https://www.douyin.com"
     user_agent = utils.get_user_agent()
     login_cls = DouYinLogin
-
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> DouyinCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return DouyinCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 15),
-                sort_type=str(config.SEARCH_SORT_TYPE),
-                publish_time=str(config.PUBLISH_TIME_TYPE),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return DouyinCrawlRequirement(
-                mode="detail",
-                aweme_ids=list(getattr(config, "DY_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return DouyinCrawlRequirement(
-            mode="creator",
-            creator_ids=list(getattr(config, "DY_CREATOR_ID_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
 
 
 class KuaishouConnectorCrawler(ConnectorCrawlerBase):
@@ -370,37 +254,6 @@ class KuaishouConnectorCrawler(ConnectorCrawlerBase):
     user_agent = utils.get_user_agent()
     login_cls = KuaishouLogin
 
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> KuaishouCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return KuaishouCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 20),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return KuaishouCrawlRequirement(
-                mode="detail",
-                video_ids=list(getattr(config, "KS_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return KuaishouCrawlRequirement(
-            mode="creator",
-            creator_ids=list(getattr(config, "KS_CREATOR_ID_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
-
 
 class BilibiliConnectorCrawler(ConnectorCrawlerBase):
     platform_name = "bilibili"
@@ -408,75 +261,12 @@ class BilibiliConnectorCrawler(ConnectorCrawlerBase):
     user_agent = utils.get_user_agent()
     login_cls = BilibiliLogin
 
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> BilibiliCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return BilibiliCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 20),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return BilibiliCrawlRequirement(
-                mode="detail",
-                video_ids=list(getattr(config, "BILI_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return BilibiliCrawlRequirement(
-            mode="creator",
-            creator_ids=list(getattr(config, "BILI_CREATOR_ID_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
-
 
 class WeiboConnectorCrawler(ConnectorCrawlerBase):
     platform_name = "weibo"
     index_url = "https://www.weibo.com"
     user_agent = utils.get_user_agent()
     login_cls = WeiboLogin
-
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> WeiboCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return WeiboCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 10),
-                search_type=str(config.WEIBO_SEARCH_TYPE or "default"),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return WeiboCrawlRequirement(
-                mode="detail",
-                note_ids=list(getattr(config, "WEIBO_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return WeiboCrawlRequirement(
-            mode="creator",
-            creator_ids=list(getattr(config, "WEIBO_CREATOR_ID_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
 
 
 class TiebaConnectorCrawler(ConnectorCrawlerBase):
@@ -486,71 +276,9 @@ class TiebaConnectorCrawler(ConnectorCrawlerBase):
     login_cls = BaiduTieBaLogin
     uses_stealth_script = False
 
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> TiebaCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return TiebaCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 10),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return TiebaCrawlRequirement(
-                mode="detail",
-                note_ids=list(getattr(config, "TIEBA_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return TiebaCrawlRequirement(
-            mode="creator",
-            creator_urls=list(getattr(config, "TIEBA_CREATOR_URL_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
-
 
 class ZhihuConnectorCrawler(ConnectorCrawlerBase):
     platform_name = "zhihu"
     index_url = "https://www.zhihu.com"
     user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     login_cls = ZhiHuLogin
-
-    def _build_task_executor(self):
-        return super()._build_task_executor()
-
-    def _build_connector_for_health_check(self):
-        return super()._build_connector_for_health_check()
-
-    def _build_requirement_from_runtime_config(self) -> ZhihuCrawlRequirement:
-        mode = str(config.CRAWLER_TYPE)
-        if mode == "search":
-            return ZhihuCrawlRequirement(
-                mode="search",
-                keywords=_split_csv(config.KEYWORDS),
-                start_page=int(config.START_PAGE),
-                max_pages=max(1, int(config.CRAWLER_MAX_NOTES_COUNT) // 20),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        if mode == "detail":
-            return ZhihuCrawlRequirement(
-                mode="detail",
-                note_urls=list(getattr(config, "ZHIHU_SPECIFIED_ID_LIST", [])),
-                include_comments=bool(config.ENABLE_GET_COMMENTS),
-                comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-            )
-        return ZhihuCrawlRequirement(
-            mode="creator",
-            creator_urls=list(getattr(config, "ZHIHU_CREATOR_URL_LIST", [])),
-            include_comments=bool(config.ENABLE_GET_COMMENTS),
-            comment_limit=int(config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES),
-        )
