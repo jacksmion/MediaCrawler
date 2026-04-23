@@ -3,13 +3,26 @@ from __future__ import annotations
 from typing import Any
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
 from runtime.http.models import HttpRequest
 from runtime.session.service import SessionService
 
 from .errors import KuaishouDataFetchError
+from .normalizer import normalize_kuaishou_video, normalize_kuaishou_videos
 
 
 class KuaishouConnector(BaseConnector):
@@ -78,15 +91,44 @@ class KuaishouConnector(BaseConnector):
         )
         search_payload = payload.get("visionSearchPhoto", {})
         items = search_payload.get("feeds", []) or []
+        normalized_records = normalize_kuaishou_videos(items)
         return SearchPage(
             items=items,
             has_more=bool(items),
             next_cursor=search_payload.get("searchSessionId", ""),
             raw=payload,
-            metadata={"request_uri": "/graphql", "keyword": query.keyword, "page": query.page},
+            metadata={
+                "request_uri": "/graphql",
+                "keyword": query.keyword,
+                "page": query.page,
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": "/graphql",
+                        "request_meta": {"keyword": query.keyword, "page": query.page},
+                        "response_body": payload,
+                        "metadata": {"bridge": "kuaishou_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "Kuaishou bridge search page succeeded",
+                            "details": {"keyword": query.keyword, "page": query.page, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": bool(items),
+                        "next_cursor": search_payload.get("searchSessionId", ""),
+                        "raw": payload,
+                    },
+                },
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         payload = await self._post_graphql(
             {
                 "operationName": "visionVideoDetail",
@@ -97,11 +139,33 @@ class KuaishouConnector(BaseConnector):
         detail = payload.get("visionVideoDetail")
         if not detail:
             raise KuaishouDataFetchError(f"Kuaishou detail payload missing visionVideoDetail for {content_id}")
-        return {
-            "video": detail,
-            "raw_payload": payload,
-            "request_uri": "/graphql",
-        }
+        normalized_record = normalize_kuaishou_video(detail)
+        return ContentDetailResult(
+            item=detail,
+            item_key="video",
+            raw_payload=payload,
+            request_uri="/graphql",
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record] if normalized_record is not None else [],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": "/graphql",
+                        "request_meta": {"video_id": content_id},
+                        "response_body": payload,
+                        "metadata": {"bridge": "kuaishou_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Kuaishou bridge detail succeeded",
+                            "details": {"video_id": content_id},
+                        }
+                    ],
+                    "response_payload": {"video": detail},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -109,7 +173,7 @@ class KuaishouConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         pcursor = str(cursor or "")
         comments: list[dict[str, Any]] = []
         raw_pages: list[dict[str, Any]] = []
@@ -123,15 +187,38 @@ class KuaishouConnector(BaseConnector):
             remaining = max_count - len(comments)
             comments.extend(page_comments[:remaining])
             pcursor = payload.get("pcursorV2", "no_more")
-        return {
-            "comments": comments,
-            "cursor": pcursor,
-            "has_more": pcursor != "no_more",
-            "request_uri": "/rest/v/photo/comment/list",
-            "raw_payload": raw_pages,
-        }
+        return CommentsPage(
+            comments=comments,
+            next_cursor=pcursor,
+            has_more=pcursor != "no_more",
+            request_uri="/rest/v/photo/comment/list",
+            raw_payload=raw_pages,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": "/rest/v/photo/comment/list",
+                        "request_meta": {"video_id": content_id, "cursor": str(cursor or ""), "limit": max_count},
+                        "response_body": raw_pages,
+                        "metadata": {"bridge": "kuaishou_connector", "comment_count": len(comments)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Kuaishou bridge comments succeeded",
+                            "details": {"video_id": content_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": pcursor,
+                        "has_more": pcursor != "no_more",
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         payload = await self._post_graphql(
             {
                 "operationName": "visionProfile",
@@ -142,18 +229,37 @@ class KuaishouConnector(BaseConnector):
         creator = payload.get("visionProfile", {}).get("userProfile")
         if not creator:
             raise KuaishouDataFetchError(f"Kuaishou creator payload missing userProfile for {creator_id}")
-        return {
-            "creator": creator,
-            "raw_payload": payload,
-            "request_uri": "/graphql",
-        }
+        return CreatorResult(
+            creator=creator,
+            raw_payload=payload,
+            request_uri="/graphql",
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": "/graphql",
+                        "request_meta": {"creator_id": creator_id},
+                        "response_body": payload,
+                        "metadata": {"bridge": "kuaishou_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Kuaishou bridge creator succeeded",
+                            "details": {"creator_id": creator_id},
+                        }
+                    ],
+                    "response_payload": {"creator": creator},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         payload = await self._post_graphql(
             {
                 "operationName": "visionProfilePhotoList",
@@ -163,13 +269,39 @@ class KuaishouConnector(BaseConnector):
         )
         profile_photo_list = payload.get("visionProfilePhotoList", {})
         items = (profile_photo_list.get("feeds", []) or [])[: int(limit or 20)]
-        return {
-            "items": items,
-            "has_more": profile_photo_list.get("pcursor", "no_more") != "no_more",
-            "next_cursor": profile_photo_list.get("pcursor", ""),
-            "raw_payload": payload,
-            "request_uri": "/graphql",
-        }
+        normalized_records = normalize_kuaishou_videos(items)
+        return CreatorContentsPage(
+            items=items,
+            has_more=profile_photo_list.get("pcursor", "no_more") != "no_more",
+            next_cursor=profile_photo_list.get("pcursor", ""),
+            raw_payload=payload,
+            request_uri="/graphql",
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": "/graphql",
+                        "request_meta": {"creator_id": creator_id, "cursor": str(cursor or "")},
+                        "response_body": payload,
+                        "metadata": {"bridge": "kuaishou_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Kuaishou bridge creator contents succeeded",
+                            "details": {"creator_id": creator_id, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": profile_photo_list.get("pcursor", "no_more") != "no_more",
+                        "next_cursor": profile_photo_list.get("pcursor", ""),
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()

@@ -3,7 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
 from runtime.http.models import HttpRequest
@@ -12,6 +24,7 @@ from runtime.session.service import SessionService
 from .errors import BilibiliDataFetchError
 from .fields import CommentOrderType, SearchOrderType
 from .helpers import BilibiliSign
+from .normalizer import normalize_bilibili_video, normalize_bilibili_videos
 
 
 class BilibiliConnector(BaseConnector):
@@ -77,15 +90,42 @@ class BilibiliConnector(BaseConnector):
             },
         )
         items = payload.get("result", []) or []
+        outcome = {
+            "raw_record": {
+                "record_type": "search",
+                "source_uri": "/x/web-interface/wbi/search/type",
+                "request_meta": {"keyword": query.keyword, "page": query.page},
+                "response_body": payload,
+                "metadata": {"bridge": "bilibili_connector", "items_count": len(items)},
+            },
+            "events": [
+                {
+                    "event_type": "search_page_succeeded",
+                    "message": "Bilibili bridge search page succeeded",
+                    "details": {"keyword": query.keyword, "page": query.page, "items_count": len(items)},
+                }
+            ],
+            "response_payload": {
+                "items": items,
+                "has_more": bool(items),
+                "next_cursor": str(query.page + 1) if items else None,
+                "raw": payload,
+            },
+        }
         return SearchPage(
             items=items,
             has_more=bool(items),
             next_cursor=str(query.page + 1) if items else None,
             raw=payload,
-            metadata={"request_uri": "/x/web-interface/wbi/search/type", "keyword": query.keyword, "page": query.page},
+            metadata={
+                "request_uri": "/x/web-interface/wbi/search/type",
+                "keyword": query.keyword,
+                "page": query.page,
+                "outcome": outcome,
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         params: dict[str, Any]
         if str((extra or {}).get("bvid") or ""):
             params = {"bvid": str((extra or {}).get("bvid"))}
@@ -94,12 +134,40 @@ class BilibiliConnector(BaseConnector):
         payload = await self._get_json("/x/web-interface/view/detail", params, sign_params=False)
         if not payload.get("View"):
             raise BilibiliDataFetchError(f"Bilibili detail payload missing View for content {content_id}")
-        return {
-            "video": payload,
-            "raw_payload": payload,
-            "request_uri": "/x/web-interface/view/detail",
-            "request_params": params,
-        }
+        normalized_record = normalize_bilibili_video(payload)
+        return ContentDetailResult(
+            item=payload,
+            item_key="video",
+            raw_payload=payload,
+            request_uri="/x/web-interface/view/detail",
+            request_params=params,
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record] if normalized_record is not None else [],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": "/x/web-interface/view/detail",
+                        "request_meta": {
+                            "content_id": content_id,
+                            "bvid": str((extra or {}).get("bvid") or ""),
+                        },
+                        "response_body": payload,
+                        "metadata": {"bridge": "bilibili_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Bilibili bridge detail succeeded",
+                            "details": {
+                                "content_id": content_id,
+                                "bvid": str((extra or {}).get("bvid") or ""),
+                            },
+                        }
+                    ],
+                    "response_payload": {"video": payload},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -107,7 +175,7 @@ class BilibiliConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         comments: list[dict[str, Any]] = []
         next_cursor = int(cursor or 0)
         is_end = False
@@ -133,30 +201,72 @@ class BilibiliConnector(BaseConnector):
             cursor_info = payload.get("cursor", {})
             is_end = bool(cursor_info.get("is_end", True))
             next_cursor = int(cursor_info.get("next", next_cursor))
-        return {
-            "comments": comments,
-            "cursor": next_cursor,
-            "has_more": not is_end,
-            "request_uri": "/x/v2/reply/wbi/main",
-            "raw_payload": raw_pages,
-        }
+        return CommentsPage(
+            comments=comments,
+            next_cursor=next_cursor,
+            has_more=not is_end,
+            request_uri="/x/v2/reply/wbi/main",
+            raw_payload=raw_pages,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": "/x/v2/reply/wbi/main",
+                        "request_meta": {"content_id": content_id},
+                        "response_body": raw_pages,
+                        "metadata": {"bridge": "bilibili_connector", "comment_count": len(comments)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Bilibili bridge comments succeeded",
+                            "details": {"content_id": content_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": next_cursor,
+                        "has_more": not is_end,
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         payload = await self._get_json("/x/space/wbi/acc/info", {"mid": int(creator_id)})
         if not payload.get("name"):
             raise BilibiliDataFetchError(f"Bilibili creator payload missing name for creator {creator_id}")
-        return {
-            "creator": payload,
-            "raw_payload": payload,
-            "request_uri": "/x/space/wbi/acc/info",
-        }
+        return CreatorResult(
+            creator=payload,
+            raw_payload=payload,
+            request_uri="/x/space/wbi/acc/info",
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": "/x/space/wbi/acc/info",
+                        "request_meta": {"creator_id": creator_id},
+                        "response_body": payload,
+                        "metadata": {"bridge": "bilibili_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Bilibili bridge creator succeeded",
+                            "details": {"creator_id": creator_id},
+                        }
+                    ],
+                    "response_payload": {"creator": payload},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         page_number = int(cursor or 1)
         page_size = int(limit or 30)
         payload = await self._get_json(
@@ -172,17 +282,46 @@ class BilibiliConnector(BaseConnector):
         items: list[dict[str, Any]] = []
         for item in raw_items:
             detail = await self.fetch_content_detail(str(item.get("aid") or 0), extra={"bvid": item.get("bvid", "")})
-            items.append(detail["video"])
+            items.append(detail.item)
         page_info = payload.get("page", {}) or {}
         total = int(page_info.get("count", 0) or 0)
         has_more = total > page_number * page_size
-        return {
-            "items": items,
-            "has_more": has_more,
-            "next_cursor": str(page_number + 1) if has_more else "",
-            "raw_payload": payload,
-            "request_uri": "/x/space/wbi/arc/search",
-        }
+        normalized_records = normalize_bilibili_videos(items)
+        return CreatorContentsPage(
+            items=items,
+            has_more=has_more,
+            next_cursor=str(page_number + 1) if has_more else "",
+            raw_payload=payload,
+            request_uri="/x/space/wbi/arc/search",
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": "/x/space/wbi/arc/search",
+                        "request_meta": {"creator_id": creator_id, "cursor": str(cursor or 1)},
+                        "response_body": payload,
+                        "metadata": {
+                            "bridge": "bilibili_connector",
+                            "normalized_count": len(normalized_records),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Bilibili bridge creator contents succeeded",
+                            "details": {"creator_id": creator_id, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": has_more,
+                        "next_cursor": str(page_number + 1) if has_more else "",
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()

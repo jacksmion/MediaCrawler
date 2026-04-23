@@ -8,7 +8,7 @@ from connectors.bilibili.normalizer import normalize_bilibili_video, normalize_b
 from schemas.tasks.models import CrawlJobEvent, CrawlTask, RawRecord
 from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 
-from .base import BasePlatformHooks, ExecutionServices
+from connectors.base.execution import BasePlatformHooks, ExecutionServices
 
 
 class BilibiliPlatformHooks(BasePlatformHooks):
@@ -35,6 +35,9 @@ class BilibiliPlatformHooks(BasePlatformHooks):
         if task.task_type == "creator_contents":
             return PlatformTaskRequest(job_id=job_id, platform_code=self.platform_code, task_kind="creator_contents", payload={"creator_id": str(params.get("creator_id") or ""), "cursor": str(params.get("cursor", "")), "limit": int(params.get("limit", 30))})
         raise ValueError(f"Unsupported Bilibili task type: {task.task_type}")
+
+    def use_generic_success_handling(self) -> bool:
+        return True
 
     def classify_error(self, message: str) -> str:
         lowered = message.lower()

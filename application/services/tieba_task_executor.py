@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from application.platform_hooks.base import ExecutionServices
-from application.platform_hooks.tieba import TiebaPlatformHooks
+from connectors.base.execution import ExecutionServices
+from connectors.tieba.execution import TiebaPlatformHooks
 from model.m_baidu_tieba import TiebaNote
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.requirements import TiebaCrawlRequirement

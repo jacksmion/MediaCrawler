@@ -6,8 +6,9 @@ from typing import Any
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.runtime import PlatformTaskResult
 
-from application.platform_hooks.base import BasePlatformHooks, ExecutionServices
+from connectors.base.execution import BasePlatformHooks, ExecutionServices
 
+from .platform_outcome_service import PlatformOutcomeService
 from .platform_task_service import PlatformTaskService
 
 
@@ -46,14 +47,22 @@ class BaseTaskExecutor(ABC):
             result = await task_service.execute(request)
             await self.services.crawl_state_service.append_result(result)
             await self.services.crawl_state_service.mark_job_succeeded(running_job, metrics=result.metrics)
-            payload = await self.hooks.handle_success(
-                task=task,
-                request=request,
-                task_result=result,
-                job_id=job_id,
-                task_id=persisted_task.task_id,
-                services=self.services,
-            )
+            if self.hooks.use_generic_success_handling():
+                payload = await PlatformOutcomeService.process_task_outcome(
+                    self.services,
+                    platform_code=self.platform_code,
+                    job_id=job_id,
+                    outcome=result.outcome,
+                )
+            else:
+                payload = await self.hooks.handle_success(
+                    task=task,
+                    request=request,
+                    task_result=result,
+                    job_id=job_id,
+                    task_id=persisted_task.task_id,
+                    services=self.services,
+                )
             return {"job_id": job_id, "task_id": persisted_task.task_id, **payload}
         except self.hooks.handled_exceptions as exc:  # type: ignore[misc]
             error_message = str(exc)

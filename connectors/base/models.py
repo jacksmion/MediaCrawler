@@ -86,10 +86,101 @@ class SearchPage:
 
 
 @dataclass(slots=True)
+class ContentDetailResult:
+    """Unified detail output with a transitional legacy alias key."""
+
+    item: dict[str, Any]
+    item_key: str = "item"
+    request_uri: str = ""
+    raw_payload: dict[str, Any] | list[Any] | str | None = None
+    request_params: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = {
+            "item": self.item,
+            "request_uri": self.request_uri,
+            "raw_payload": self.raw_payload,
+            "request_params": self.request_params,
+            "metadata": self.metadata,
+        }
+        payload[self.item_key] = self.item
+        return payload
+
+
+@dataclass(slots=True)
+class CommentsPage:
+    """Unified comments output page."""
+
+    comments: list[dict[str, Any]]
+    has_more: bool = False
+    next_cursor: str | int | None = None
+    request_uri: str = ""
+    raw_payload: dict[str, Any] | list[Any] | str | None = None
+    request_params: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "comments": self.comments,
+            "has_more": self.has_more,
+            "next_cursor": self.next_cursor,
+            "cursor": self.next_cursor,
+            "request_uri": self.request_uri,
+            "raw_payload": self.raw_payload,
+            "request_params": self.request_params,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(slots=True)
+class CreatorResult:
+    """Unified creator output."""
+
+    creator: dict[str, Any]
+    request_uri: str = ""
+    raw_payload: dict[str, Any] | list[Any] | str | None = None
+    request_params: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "creator": self.creator,
+            "request_uri": self.request_uri,
+            "raw_payload": self.raw_payload,
+            "request_params": self.request_params,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(slots=True)
+class CreatorContentsPage:
+    """Unified creator contents output page."""
+
+    items: list[dict[str, Any]]
+    has_more: bool = False
+    next_cursor: str | int | None = None
+    request_uri: str = ""
+    raw_payload: dict[str, Any] | list[Any] | str | None = None
+    request_params: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "items": self.items,
+            "has_more": self.has_more,
+            "next_cursor": self.next_cursor,
+            "request_uri": self.request_uri,
+            "raw_payload": self.raw_payload,
+            "request_params": self.request_params,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(slots=True)
 class FetchCursor:
     """Cursor wrapper for comments or creator-content pagination."""
 
     value: str | int | None = None
     has_more: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-

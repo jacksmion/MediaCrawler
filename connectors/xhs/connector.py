@@ -3,13 +3,26 @@ from __future__ import annotations
 from typing import Any
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from runtime.browser.executor import BrowserExecutor
 from runtime.session.service import SessionService
 
 from .errors import XhsDataFetchError
 from .fields import SearchSortType
 from .helpers import parse_creator_info_from_url
+from .normalizer import normalize_xhs_note, normalize_xhs_notes
 
 
 class XhsConnector(BaseConnector):
@@ -80,15 +93,54 @@ class XhsConnector(BaseConnector):
             for item in response.get("items", []) or []
             if item.get("model_type") not in ("rec_query", "hot_query")
         ]
+        notes = await self._hydrate_note_details(items, default_xsec_source="pc_search")
+        normalized_records = normalize_xhs_notes(notes)
+        has_more = bool(response.get("has_more", False))
+        next_cursor = str(query.page + 1) if has_more else None
         return SearchPage(
-            items=items,
-            has_more=bool(response.get("has_more", False)),
-            next_cursor=str(query.page + 1) if response.get("has_more", False) else None,
+            items=notes,
+            has_more=has_more,
+            next_cursor=next_cursor,
             raw=response,
-            metadata={"request_uri": "/api/sns/web/v1/search/notes", "keyword": query.keyword, "page": query.page},
+            metadata={
+                "request_uri": "/api/sns/web/v1/search/notes",
+                "keyword": query.keyword,
+                "page": query.page,
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": "/api/sns/web/v1/search/notes",
+                        "request_meta": {
+                            "keyword": query.keyword,
+                            "page": query.page,
+                            "search_id": str(query.metadata.get("search_id") or query.filters.get("search_id") or ""),
+                        },
+                        "response_body": response,
+                        "metadata": {
+                            "bridge": "xhs_connector",
+                            "normalized_count": len(normalized_records),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "XHS bridge search page succeeded",
+                            "details": {"keyword": query.keyword, "page": query.page, "items_count": len(notes)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": notes,
+                        "raw_items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": has_more,
+                        "next_cursor": next_cursor,
+                    },
+                },
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         client = self._get_client()
         xsec_source = str((extra or {}).get("xsec_source") or "pc_search")
         xsec_token = str((extra or {}).get("xsec_token") or "")
@@ -105,11 +157,33 @@ class XhsConnector(BaseConnector):
         if not note_detail:
             raise XhsDataFetchError(f"XHS detail payload could not be fetched for {content_id}")
         note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
-        return {
-            "note": note_detail,
-            "raw_payload": note_detail,
-            "request_uri": "/api/sns/web/v1/feed",
-        }
+        normalized_record = normalize_xhs_note(note_detail)
+        return ContentDetailResult(
+            item=note_detail,
+            item_key="note",
+            raw_payload=note_detail,
+            request_uri="/api/sns/web/v1/feed",
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": "/api/sns/web/v1/feed",
+                        "request_meta": {"note_id": content_id},
+                        "response_body": note_detail,
+                        "metadata": {"bridge": "xhs_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "XHS bridge detail succeeded",
+                            "details": {"note_id": content_id},
+                        }
+                    ],
+                    "response_payload": {"note": note_detail},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -117,7 +191,7 @@ class XhsConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         client = self._get_client()
         xsec_token = str((extra or {}).get("xsec_token") or "")
         if not xsec_token:
@@ -134,15 +208,39 @@ class XhsConnector(BaseConnector):
             callback=_collect,
             max_count=int(limit or 10),
         )
-        return {
-            "comments": comments[: int(limit or len(comments) or 10)],
-            "cursor": cursor or "",
-            "has_more": False,
-            "request_uri": "/api/sns/web/v2/comment/page",
-            "raw_payload": comments,
-        }
+        result_comments = comments[: int(limit or len(comments) or 10)]
+        return CommentsPage(
+            comments=result_comments,
+            next_cursor=cursor or "",
+            has_more=False,
+            request_uri="/api/sns/web/v2/comment/page",
+            raw_payload=comments,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": "/api/sns/web/v2/comment/page",
+                        "request_meta": {"note_id": content_id},
+                        "response_body": comments,
+                        "metadata": {"bridge": "xhs_connector", "comment_count": len(result_comments)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "XHS bridge comments succeeded",
+                            "details": {"note_id": content_id, "comment_count": len(result_comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": result_comments,
+                        "cursor": cursor or "",
+                        "has_more": False,
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         client = self._get_client()
         try:
             parsed = parse_creator_info_from_url(creator_id)
@@ -155,21 +253,42 @@ class XhsConnector(BaseConnector):
         )
         if not creator:
             raise XhsDataFetchError(f"XHS creator payload could not be fetched for {creator_id}")
-        return {
-            "creator": creator,
-            "raw_payload": creator,
-            "request_uri": f"/user/profile/{parsed.user_id}",
-            "creator_id": parsed.user_id,
-            "xsec_token": parsed.xsec_token,
-            "xsec_source": parsed.xsec_source,
-        }
+        return CreatorResult(
+            creator=creator,
+            raw_payload=creator,
+            request_uri=f"/user/profile/{parsed.user_id}",
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": f"/user/profile/{parsed.user_id}",
+                        "request_meta": {"creator_url": creator_id},
+                        "response_body": creator,
+                        "metadata": {"bridge": "xhs_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "XHS bridge creator succeeded",
+                            "details": {"creator_url": creator_id},
+                        }
+                    ],
+                    "response_payload": {
+                        "creator": creator,
+                        "creator_id": parsed.user_id,
+                        "xsec_token": parsed.xsec_token,
+                        "xsec_source": parsed.xsec_source,
+                    },
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         client = self._get_client()
         try:
             parsed = parse_creator_info_from_url(creator_id)
@@ -183,16 +302,47 @@ class XhsConnector(BaseConnector):
             xsec_source=parsed.xsec_source or "pc_feed",
         )
         items = response.get("notes", []) or []
-        return {
-            "items": items[: int(limit or len(items) or 30)],
-            "has_more": bool(response.get("has_more", False)),
-            "next_cursor": str(response.get("cursor") or ""),
-            "raw_payload": response,
-            "request_uri": "/api/sns/web/v1/user_posted",
-            "creator_id": parsed.user_id,
-            "xsec_token": parsed.xsec_token,
-            "xsec_source": parsed.xsec_source,
-        }
+        raw_items = items[: int(limit or len(items) or 30)]
+        notes = await self._hydrate_note_details(raw_items, default_xsec_source=parsed.xsec_source or "pc_feed")
+        normalized_records = normalize_xhs_notes(notes)
+        has_more = bool(response.get("has_more", False))
+        next_cursor = str(response.get("cursor") or "")
+        return CreatorContentsPage(
+            items=notes,
+            has_more=has_more,
+            next_cursor=next_cursor,
+            raw_payload=response,
+            request_uri="/api/sns/web/v1/user_posted",
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": "/api/sns/web/v1/user_posted",
+                        "request_meta": {"creator_url": creator_id, "cursor": str(cursor or "")},
+                        "response_body": response,
+                        "metadata": {
+                            "bridge": "xhs_connector",
+                            "normalized_count": len(normalized_records),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "XHS bridge creator contents succeeded",
+                            "details": {"creator_url": creator_id, "items_count": len(notes)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": notes,
+                        "raw_items": raw_items,
+                        "normalized_records": normalized_records,
+                        "has_more": has_more,
+                        "next_cursor": next_cursor,
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()
@@ -211,3 +361,20 @@ class XhsConnector(BaseConnector):
         if self.legacy_client is None:
             raise XhsDataFetchError("XHS legacy client is not ready; browser runtime has not been initialized.")
         return self.legacy_client
+
+    async def _hydrate_note_details(self, raw_items: list[dict[str, Any]], *, default_xsec_source: str) -> list[dict[str, Any]]:
+        if not raw_items:
+            return []
+        notes: list[dict[str, Any]] = []
+        for item in raw_items:
+            note_id = str(item.get("note_id") or item.get("id") or "")
+            xsec_token = str(item.get("xsec_token") or "")
+            if not note_id or not xsec_token:
+                continue
+            detail = await self.fetch_content_detail(
+                note_id,
+                extra={"xsec_source": str(item.get("xsec_source") or default_xsec_source), "xsec_token": xsec_token},
+            )
+            if detail.item:
+                notes.append(detail.item)
+        return notes

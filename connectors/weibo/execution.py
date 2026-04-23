@@ -8,7 +8,7 @@ from connectors.weibo.normalizer import normalize_weibo_note, normalize_weibo_no
 from schemas.tasks.models import CrawlJobEvent, CrawlTask, RawRecord
 from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 
-from .base import BasePlatformHooks, ExecutionServices
+from connectors.base.execution import BasePlatformHooks, ExecutionServices
 
 
 class WeiboPlatformHooks(BasePlatformHooks):
@@ -19,6 +19,9 @@ class WeiboPlatformHooks(BasePlatformHooks):
 
     def build_connector(self):
         return build_weibo_connector_from_legacy(self.crawler)
+
+    def use_generic_success_handling(self) -> bool:
+        return True
 
     def build_request(self, task: CrawlTask, job_id: str) -> PlatformTaskRequest:
         params = task.params or {}

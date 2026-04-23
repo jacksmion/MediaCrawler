@@ -48,6 +48,9 @@ class BasePlatformHooks(ABC):
     def build_finished_event(self, task: CrawlTask, job_id: str) -> CrawlJobEvent | None:
         return None
 
+    def use_generic_success_handling(self) -> bool:
+        return False
+
     @abstractmethod
     def build_connector(self):
         raise NotImplementedError
@@ -64,7 +67,6 @@ class BasePlatformHooks(ABC):
     def build_failure_event(self, *, task: CrawlTask, job_id: str, error_message: str, error_code: str) -> CrawlJobEvent:
         raise NotImplementedError
 
-    @abstractmethod
     async def handle_success(
         self,
         *,
@@ -75,4 +77,7 @@ class BasePlatformHooks(ABC):
         task_id: str,
         services: ExecutionServices,
     ) -> dict[str, Any]:
-        raise NotImplementedError
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement handle_success(); "
+            "enable generic success handling or provide a hook-specific implementation."
+        )

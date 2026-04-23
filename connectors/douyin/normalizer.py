@@ -70,3 +70,65 @@ def normalize_search_items(items: list[dict[str, Any]]) -> list[ContentRecord]:
         if record is not None:
             records.append(record)
     return records
+
+
+def parse_search_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    items = payload.get("items", [])
+    normalized_records = normalize_search_items(items)
+    return {
+        "items": items,
+        "normalized_records": normalized_records,
+        "next_cursor": payload.get("next_cursor"),
+        "raw": payload.get("raw"),
+    }
+
+
+def parse_detail_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    aweme_detail = payload.get("aweme_detail") or payload.get("item") or {}
+    normalized_record = normalize_aweme_detail(aweme_detail) if aweme_detail else None
+    return {
+        "aweme_detail": aweme_detail,
+        "normalized_record": normalized_record,
+        "raw_payload": payload.get("raw_payload"),
+        "request_uri": payload.get("request_uri", "/aweme/v1/web/aweme/detail/"),
+        "request_params": payload.get("request_params", {}),
+    }
+
+
+def parse_comments_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "comments": payload.get("comments", []),
+        "cursor": payload.get("cursor", payload.get("next_cursor")),
+        "has_more": payload.get("has_more", False),
+        "raw_payload": payload.get("raw_payload", payload),
+        "request_uri": payload.get("request_uri", "/aweme/v1/web/comment/list/"),
+        "request_params": payload.get("request_params", {}),
+    }
+
+
+def parse_creator_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    creator_payload = payload.get("creator", payload.get("raw_payload"))
+    return {
+        "creator": creator_payload,
+        "raw_payload": payload.get("raw_payload", creator_payload),
+        "request_uri": payload.get("request_uri", "/aweme/v1/web/user/profile/other/"),
+        "request_params": payload.get("request_params", {}),
+    }
+
+
+def parse_creator_contents_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    items = payload.get("items", [])
+    normalized_records: list[ContentRecord] = []
+    for item in items:
+        record = normalize_aweme_detail(item)
+        if record is not None:
+            normalized_records.append(record)
+    return {
+        "items": items,
+        "normalized_records": normalized_records,
+        "next_cursor": payload.get("next_cursor"),
+        "has_more": payload.get("has_more", False),
+        "raw_payload": payload.get("raw_payload"),
+        "request_uri": payload.get("request_uri", "/aweme/v1/web/aweme/post/"),
+        "request_params": payload.get("request_params", {}),
+    }

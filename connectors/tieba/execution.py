@@ -9,7 +9,7 @@ from model.m_baidu_tieba import TiebaNote
 from schemas.tasks.models import CrawlJobEvent, CrawlTask, RawRecord
 from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 
-from .base import BasePlatformHooks, ExecutionServices
+from connectors.base.execution import BasePlatformHooks, ExecutionServices
 
 
 class TiebaPlatformHooks(BasePlatformHooks):
@@ -20,6 +20,9 @@ class TiebaPlatformHooks(BasePlatformHooks):
 
     def build_connector(self):
         return build_tieba_connector_from_legacy(self.crawler)
+
+    def use_generic_success_handling(self) -> bool:
+        return True
 
     def build_request(self, task: CrawlTask, job_id: str) -> PlatformTaskRequest:
         params = task.params or {}

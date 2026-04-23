@@ -4,8 +4,21 @@ import urllib.parse
 from typing import Any
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from .errors import DouyinDataFetchError
+from .normalizer import normalize_aweme_detail, normalize_search_items
 from runtime.hybrid.executor import HybridExecutor
 from runtime.http.models import HttpRequest
 from runtime.session.service import SessionService
@@ -129,6 +142,7 @@ class DouyinConnector(BaseConnector):
             raise DouyinDataFetchError(f"Douyin search returned error payload: {payload}")
         items = payload.get("data", []) if isinstance(payload, dict) else []
         extra = payload.get("extra", {}) if isinstance(payload, dict) else {}
+        normalized_records = normalize_search_items(items)
         return SearchPage(
             items=items,
             has_more=bool(items),
@@ -139,10 +153,43 @@ class DouyinConnector(BaseConnector):
                 "search_id": signed_params.get("search_id"),
                 "logid": extra.get("logid"),
                 "request_uri": "/aweme/v1/web/general/search/single/",
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": "/aweme/v1/web/general/search/single/",
+                        "request_meta": {
+                            "keyword": query.keyword,
+                            "page": query.page,
+                            "search_id": query.filters.get("search_id", query.cursor or ""),
+                        },
+                        "response_body": payload,
+                        "metadata": {"bridge": "douyin_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "Douyin bridge search page succeeded",
+                            "details": {
+                                "keyword": query.keyword,
+                                "page": query.page,
+                                "items_count": len(items),
+                                "normalized_count": len(normalized_records),
+                                "next_cursor": extra.get("logid"),
+                            },
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "next_cursor": extra.get("logid"),
+                        "raw": payload,
+                    },
+                },
             },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         session = await self.session_service.refresh_from_browser(
             self.hybrid_executor.browser_executor,
             account_id=self.context.account_id if self.context else None,
@@ -181,12 +228,34 @@ class DouyinConnector(BaseConnector):
         detail = payload.get("aweme_detail", {})
         if not detail:
             raise DouyinDataFetchError(f"Douyin detail payload missing aweme_detail: {payload}")
-        return {
-            "aweme_detail": detail,
-            "raw_payload": payload,
-            "request_uri": "/aweme/v1/web/aweme/detail/",
-            "request_params": signed_params,
-        }
+        normalized_record = normalize_aweme_detail(detail)
+        return ContentDetailResult(
+            item=detail,
+            item_key="aweme_detail",
+            raw_payload=payload,
+            request_uri="/aweme/v1/web/aweme/detail/",
+            request_params=signed_params,
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record] if normalized_record is not None else [],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": "/aweme/v1/web/aweme/detail/",
+                        "request_meta": {"aweme_id": content_id, "request_params": signed_params},
+                        "response_body": payload,
+                        "metadata": {"bridge": "douyin_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Douyin bridge detail succeeded",
+                            "details": {"aweme_id": content_id},
+                        }
+                    ],
+                    "response_payload": {"aweme_detail": detail, "normalized_record": normalized_record},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -194,7 +263,7 @@ class DouyinConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         session = await self.session_service.refresh_from_browser(
             self.hybrid_executor.browser_executor,
             account_id=self.context.account_id if self.context else None,
@@ -213,6 +282,8 @@ class DouyinConnector(BaseConnector):
         root_cursor = int(cursor or 0)
         has_more = 1
         max_count = limit or 20
+        last_payload: dict[str, Any] | None = None
+        last_signed_params: dict[str, Any] = {}
         while has_more and len(comments) < max_count:
             params = {
                 "aweme_id": content_id,
@@ -242,6 +313,8 @@ class DouyinConnector(BaseConnector):
             payload = response.data if isinstance(response.data, dict) else {}
             if not payload:
                 raise DouyinDataFetchError(f"Douyin comment returned invalid payload: {response.text[:300]}")
+            last_payload = payload
+            last_signed_params = signed_params
             page_comments = payload.get("comments", []) or []
             has_more = payload.get("has_more", 0)
             root_cursor = payload.get("cursor", 0)
@@ -250,14 +323,44 @@ class DouyinConnector(BaseConnector):
                 break
             page_comments = page_comments[:remaining]
             comments.extend(page_comments)
-        return {
-            "comments": comments,
-            "cursor": root_cursor,
-            "has_more": has_more,
-            "request_uri": "/aweme/v1/web/comment/list/",
-        }
+        return CommentsPage(
+            comments=comments,
+            next_cursor=root_cursor,
+            has_more=bool(has_more),
+            request_uri="/aweme/v1/web/comment/list/",
+            raw_payload=last_payload,
+            request_params=last_signed_params,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": "/aweme/v1/web/comment/list/",
+                        "request_meta": {"aweme_id": content_id, "limit": max_count, "cursor": cursor or 0},
+                        "response_body": last_payload or {"comments": comments, "cursor": root_cursor, "has_more": has_more},
+                        "metadata": {
+                            "bridge": "douyin_connector",
+                            "comment_count": len(comments),
+                            "cursor": root_cursor,
+                            "has_more": bool(has_more),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Douyin bridge comments succeeded",
+                            "details": {"aweme_id": content_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": root_cursor,
+                        "has_more": bool(has_more),
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         session = await self.session_service.refresh_from_browser(
             self.hybrid_executor.browser_executor,
             account_id=self.context.account_id if self.context else None,
@@ -300,18 +403,38 @@ class DouyinConnector(BaseConnector):
         user = payload.get("user", {})
         if not user:
             raise DouyinDataFetchError(f"Douyin creator payload missing user: {payload}")
-        return {
-            "creator": payload,
-            "request_uri": "/aweme/v1/web/user/profile/other/",
-            "request_params": signed_params,
-        }
+        return CreatorResult(
+            creator=payload,
+            request_uri="/aweme/v1/web/user/profile/other/",
+            raw_payload=payload,
+            request_params=signed_params,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": "/aweme/v1/web/user/profile/other/",
+                        "request_meta": {"creator_id": creator_id, "request_params": signed_params},
+                        "response_body": payload,
+                        "metadata": {"bridge": "douyin_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Douyin bridge creator succeeded",
+                            "details": {"creator_id": creator_id},
+                        }
+                    ],
+                    "response_payload": {"creator": payload},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         session = await self.session_service.refresh_from_browser(
             self.hybrid_executor.browser_executor,
             account_id=self.context.account_id if self.context else None,
@@ -358,14 +481,49 @@ class DouyinConnector(BaseConnector):
         if not payload:
             raise DouyinDataFetchError(f"Douyin creator contents returned invalid payload: {response.text[:300]}")
         aweme_list = payload.get("aweme_list", []) or []
-        return {
-            "items": aweme_list,
-            "has_more": payload.get("has_more", 0),
-            "next_cursor": payload.get("max_cursor", ""),
-            "raw_payload": payload,
-            "request_uri": "/aweme/v1/web/aweme/post/",
-            "request_params": signed_params,
-        }
+        normalized_records = [record for item in aweme_list if (record := normalize_aweme_detail(item)) is not None]
+        return CreatorContentsPage(
+            items=aweme_list,
+            has_more=bool(payload.get("has_more", 0)),
+            next_cursor=payload.get("max_cursor", ""),
+            raw_payload=payload,
+            request_uri="/aweme/v1/web/aweme/post/",
+            request_params=signed_params,
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": "/aweme/v1/web/aweme/post/",
+                        "request_meta": {
+                            "creator_id": creator_id,
+                            "cursor": cursor or "",
+                            "request_params": signed_params,
+                        },
+                        "response_body": payload,
+                        "metadata": {"bridge": "douyin_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Douyin bridge creator contents succeeded",
+                            "details": {
+                                "creator_id": creator_id,
+                                "items_count": len(aweme_list),
+                                "normalized_count": len(normalized_records),
+                                "next_cursor": payload.get("max_cursor", ""),
+                            },
+                        }
+                    ],
+                    "response_payload": {
+                        "items": aweme_list,
+                        "normalized_records": normalized_records,
+                        "has_more": bool(payload.get("has_more", 0)),
+                        "next_cursor": payload.get("max_cursor", ""),
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.hybrid_executor.close()

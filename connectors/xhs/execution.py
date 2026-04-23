@@ -9,7 +9,7 @@ from connectors.xhs.helpers import get_search_id, parse_note_info_from_note_url
 from schemas.tasks.models import CrawlJobEvent, CrawlTask, RawRecord
 from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 
-from .base import BasePlatformHooks, ExecutionServices
+from connectors.base.execution import BasePlatformHooks, ExecutionServices
 
 
 class XhsPlatformHooks(BasePlatformHooks):
@@ -20,6 +20,9 @@ class XhsPlatformHooks(BasePlatformHooks):
 
     def build_connector(self):
         return build_xhs_connector_from_legacy(self.crawler)
+
+    def use_generic_success_handling(self) -> bool:
+        return True
 
     def build_request(self, task: CrawlTask, job_id: str) -> PlatformTaskRequest:
         params = task.params or {}
@@ -270,7 +273,7 @@ class XhsPlatformHooks(BasePlatformHooks):
                     note_id,
                     extra={"xsec_source": str(item.get("xsec_source") or default_xsec_source), "xsec_token": xsec_token},
                 )
-                note = detail.get("note")
+                note = detail.item if hasattr(detail, "item") else detail.get("note")
                 if note:
                     notes.append(note)
             return notes

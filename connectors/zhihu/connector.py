@@ -4,7 +4,19 @@ from typing import Any
 from urllib.parse import urlencode
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from constant import zhihu as zhihu_constant
 from model.m_zhihu import ZhihuContent
 from runtime.browser.executor import BrowserExecutor
@@ -14,6 +26,7 @@ from runtime.session.service import SessionService
 
 from .errors import ZhihuDataFetchError
 from .helpers import ZhihuExtractor, judge_zhihu_url, sign
+from .normalizer import normalize_zhihu_content, normalize_zhihu_contents
 
 
 class ZhihuConnector(BaseConnector):
@@ -86,26 +99,76 @@ class ZhihuConnector(BaseConnector):
         contents = self.extractor.extract_contents_from_search(payload)
         items = [content.model_dump() for content in contents]
         paging = payload.get("paging", {}) if isinstance(payload, dict) else {}
+        normalized_records = normalize_zhihu_contents(contents)
         return SearchPage(
             items=items,
             has_more=not bool(paging.get("is_end", not items)),
             next_cursor=str((query.page + 1)) if items else None,
             raw=payload,
-            metadata={"request_uri": "/api/v4/search_v3", "keyword": query.keyword, "page": query.page},
+            metadata={
+                "request_uri": "/api/v4/search_v3",
+                "keyword": query.keyword,
+                "page": query.page,
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": "/api/v4/search_v3",
+                        "request_meta": {"keyword": query.keyword, "page": query.page},
+                        "response_body": payload,
+                        "metadata": {"bridge": "zhihu_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "Zhihu bridge search page succeeded",
+                            "details": {"keyword": query.keyword, "page": query.page, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": not bool(paging.get("is_end", not items)),
+                        "next_cursor": str((query.page + 1)) if items else None,
+                        "raw": payload,
+                    },
+                },
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         detail_url = self._resolve_detail_url(content_id, extra)
         html = await self._get_text(detail_url)
         content = self._extract_detail_from_html(detail_url, html)
         if content is None:
             raise ZhihuDataFetchError(f"Zhihu detail payload could not be parsed for {detail_url}")
-        return {
-            "content": content.model_dump(),
-            "raw_payload": html,
-            "request_uri": detail_url,
-            "content_type": content.content_type,
-        }
+        normalized_record = normalize_zhihu_content(content)
+        return ContentDetailResult(
+            item=content.model_dump(),
+            item_key="content",
+            raw_payload=html,
+            request_uri=detail_url,
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": detail_url,
+                        "request_meta": {"content_id": content_id},
+                        "response_body": html,
+                        "metadata": {"bridge": "zhihu_connector", "content_type": content.content_type},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Zhihu bridge detail succeeded",
+                            "details": {"content_id": content_id, "content_type": content.content_type},
+                        }
+                    ],
+                    "response_payload": {"content": content.model_dump()},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -113,7 +176,7 @@ class ZhihuConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         content_type = str((extra or {}).get("content_type") or "")
         if not content_type:
             raise ZhihuDataFetchError("Zhihu comments require content_type in extra payload.")
@@ -142,31 +205,74 @@ class ZhihuConnector(BaseConnector):
             offset = self.extractor.extract_offset(paging)
             if not offset and not is_end:
                 break
-        return {
-            "comments": comments,
-            "cursor": offset,
-            "has_more": not is_end,
-            "request_uri": f"/api/v4/comment_v5/{content_type}s/{content_id}/root_comment",
-            "raw_payload": raw_pages,
-        }
+        request_uri = f"/api/v4/comment_v5/{content_type}s/{content_id}/root_comment"
+        return CommentsPage(
+            comments=comments,
+            next_cursor=offset,
+            has_more=not is_end,
+            request_uri=request_uri,
+            raw_payload=raw_pages,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": request_uri,
+                        "request_meta": {"content_id": content_id, "content_type": content_type},
+                        "response_body": raw_pages,
+                        "metadata": {"bridge": "zhihu_connector", "comment_count": len(comments)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Zhihu bridge comments succeeded",
+                            "details": {"content_id": content_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": offset,
+                        "has_more": not is_end,
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         html = await self._get_text(f"/people/{creator_id}")
         creator = self.extractor.extract_creator(creator_id, html)
         if creator is None:
             raise ZhihuDataFetchError(f"Zhihu creator payload could not be parsed for {creator_id}")
-        return {
-            "creator": creator.model_dump(),
-            "raw_payload": html,
-            "request_uri": f"/people/{creator_id}",
-        }
+        return CreatorResult(
+            creator=creator.model_dump(),
+            raw_payload=html,
+            request_uri=f"/people/{creator_id}",
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": f"/people/{creator_id}",
+                        "request_meta": {"creator_id": creator_id},
+                        "response_body": html,
+                        "metadata": {"bridge": "zhihu_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Zhihu bridge creator succeeded",
+                            "details": {"creator_id": creator_id},
+                        }
+                    ],
+                    "response_payload": {"creator": creator.model_dump()},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         offset = int(cursor or 0)
         page_limit = int(limit or 20)
         payload = await self._get_json(
@@ -187,15 +293,43 @@ class ZhihuConnector(BaseConnector):
             },
         )
         contents = self.extractor.extract_content_list_from_creator(payload.get("data", []))
+        items = [content.model_dump() for content in contents]
+        normalized_records = normalize_zhihu_contents(contents)
         paging = payload.get("paging", {})
         is_end = bool(paging.get("is_end", True))
-        return {
-            "items": [content.model_dump() for content in contents],
-            "has_more": not is_end,
-            "next_cursor": "" if is_end else str(offset + page_limit),
-            "raw_payload": payload,
-            "request_uri": f"/api/v4/members/{creator_id}/answers",
-        }
+        request_uri = f"/api/v4/members/{creator_id}/answers"
+        return CreatorContentsPage(
+            items=items,
+            has_more=not is_end,
+            next_cursor="" if is_end else str(offset + page_limit),
+            raw_payload=payload,
+            request_uri=request_uri,
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": request_uri,
+                        "request_meta": {"creator_id": creator_id, "cursor": str(cursor or "")},
+                        "response_body": payload,
+                        "metadata": {"bridge": "zhihu_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Zhihu bridge creator contents succeeded",
+                            "details": {"creator_id": creator_id, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": not is_end,
+                        "next_cursor": "" if is_end else str(offset + page_limit),
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()

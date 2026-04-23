@@ -28,6 +28,7 @@ class PlatformTaskResult:
     task_kind: PlatformTaskKind
     success: bool
     payload: dict[str, Any] = field(default_factory=dict)
+    outcome: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
     error_code: str | None = None
     error_message: str = ""

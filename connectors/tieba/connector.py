@@ -5,7 +5,19 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from constant import baidu_tieba as tieba_constant
 from model.m_baidu_tieba import TiebaCreator, TiebaNote
 from runtime.browser.executor import BrowserExecutor
@@ -13,6 +25,7 @@ from runtime.session.service import SessionService
 
 from .errors import TiebaDataFetchError
 from .helpers import TieBaExtractor
+from .normalizer import normalize_tieba_note, normalize_tieba_notes
 
 
 class TiebaConnector(BaseConnector):
@@ -69,25 +82,73 @@ class TiebaConnector(BaseConnector):
         )
         html = await self._goto_and_content(full_url)
         notes = self.extractor.extract_search_note_list(html)
+        normalized_records = normalize_tieba_notes(notes)
         return SearchPage(
             items=[note.model_dump() for note in notes],
             has_more=bool(notes),
             next_cursor=str(query.page + 1) if notes else None,
             raw={"html": html},
-            metadata={"request_url": full_url},
+            metadata={
+                "request_url": full_url,
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": full_url,
+                        "request_meta": {"keyword": query.keyword, "page": query.page},
+                        "response_body": {"html": html},
+                        "metadata": {"bridge": "tieba_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "Tieba bridge search page succeeded",
+                            "details": {"keyword": query.keyword, "page": query.page, "items_count": len(notes)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": [note.model_dump() for note in notes],
+                        "normalized_records": normalized_records,
+                        "has_more": bool(notes),
+                        "next_cursor": str(query.page + 1) if notes else None,
+                    },
+                },
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         detail_url = str((extra or {}).get("detail_url") or f"{tieba_constant.TIEBA_URL}/p/{content_id}")
         html = await self._goto_and_content(detail_url)
         note = self.extractor.extract_note_detail(html)
         if not note:
             raise TiebaDataFetchError(f"Tieba detail payload could not be parsed for {detail_url}")
-        return {
-            "note": note.model_dump(),
-            "raw_payload": html,
-            "request_uri": detail_url,
-        }
+        normalized_record = normalize_tieba_note(note)
+        return ContentDetailResult(
+            item=note.model_dump(),
+            item_key="note",
+            raw_payload=html,
+            request_uri=detail_url,
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": detail_url,
+                        "request_meta": {"note_id": content_id},
+                        "response_body": html,
+                        "metadata": {"bridge": "tieba_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Tieba bridge detail succeeded",
+                            "details": {"note_id": content_id},
+                        }
+                    ],
+                    "response_payload": {"note": note.model_dump()},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -95,7 +156,7 @@ class TiebaConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         note_payload = (extra or {}).get("note")
         if not isinstance(note_payload, dict):
             raise TiebaDataFetchError("Tieba comments require note detail in extra payload.")
@@ -114,32 +175,76 @@ class TiebaConnector(BaseConnector):
             comments.extend([item.model_dump() for item in page_comments[:remaining]])
             raw_pages.append({"page": current_page, "html": html})
             current_page += 1
-        return {
-            "comments": comments,
-            "cursor": current_page,
-            "has_more": current_page <= note.total_replay_page and len(comments) < max_count,
-            "request_uri": f"/p/{note.note_id}",
-            "raw_payload": raw_pages,
-        }
+        request_uri = f"/p/{note.note_id}"
+        has_more = current_page <= note.total_replay_page and len(comments) < max_count
+        return CommentsPage(
+            comments=comments,
+            next_cursor=current_page,
+            has_more=has_more,
+            request_uri=request_uri,
+            raw_payload=raw_pages,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": request_uri,
+                        "request_meta": {"note_id": note.note_id, "cursor": cursor or 1, "limit": max_count},
+                        "response_body": raw_pages,
+                        "metadata": {"bridge": "tieba_connector", "comment_count": len(comments)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Tieba bridge comments succeeded",
+                            "details": {"note_id": note.note_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": current_page,
+                        "has_more": has_more,
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         creator_url = str(creator_id)
         html = await self._goto_and_content(creator_url)
         creator = self.extractor.extract_creator_info(html)
         if not creator:
             raise TiebaDataFetchError(f"Tieba creator payload could not be parsed for {creator_url}")
-        return {
-            "creator": creator.model_dump(),
-            "raw_payload": html,
-            "request_uri": creator_url,
-        }
+        return CreatorResult(
+            creator=creator.model_dump(),
+            raw_payload=html,
+            request_uri=creator_url,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": creator_url,
+                        "request_meta": {"creator_url": creator_url},
+                        "response_body": html,
+                        "metadata": {"bridge": "tieba_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Tieba bridge creator succeeded",
+                            "details": {"creator_url": creator_url},
+                        }
+                    ],
+                    "response_payload": {"creator": creator.model_dump()},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         creator_url = str(creator_id)
         if str(cursor or "") in ("", "0"):
             html = await self._goto_and_content(creator_url)
@@ -148,14 +253,40 @@ class TiebaConnector(BaseConnector):
             items: list[dict[str, Any]] = []
             for thread_id in thread_ids:
                 detail = await self.fetch_content_detail(thread_id)
-                items.append(detail["note"])
-            return {
-                "items": items,
-                "has_more": False,
-                "next_cursor": "",
-                "raw_payload": {"html": html, "thread_ids": thread_ids},
-                "request_uri": creator_url,
-            }
+                items.append(detail.item)
+            normalized_records = normalize_tieba_notes([TiebaNote.model_validate(item) for item in items])
+            return CreatorContentsPage(
+                items=items,
+                has_more=False,
+                next_cursor="",
+                raw_payload={"html": html, "thread_ids": thread_ids},
+                request_uri=creator_url,
+                metadata={
+                    "outcome": {
+                        "normalized_records": normalized_records,
+                        "raw_record": {
+                            "record_type": "creator_contents",
+                            "source_uri": creator_url,
+                            "request_meta": {"creator_url": creator_url, "cursor": str(cursor or "")},
+                            "response_body": {"html": html, "thread_ids": thread_ids},
+                            "metadata": {"bridge": "tieba_connector", "normalized_count": len(normalized_records)},
+                        },
+                        "events": [
+                            {
+                                "event_type": "creator_contents_succeeded",
+                                "message": "Tieba bridge creator contents succeeded",
+                                "details": {"creator_url": creator_url, "items_count": len(items)},
+                            }
+                        ],
+                        "response_payload": {
+                            "items": items,
+                            "normalized_records": normalized_records,
+                            "has_more": False,
+                            "next_cursor": "",
+                        },
+                    }
+                },
+            )
 
         page_number = int(cursor)
         user_name = str((await self.fetch_creator(creator_url))["creator"]["user_name"])
@@ -175,14 +306,42 @@ class TiebaConnector(BaseConnector):
         items = []
         for thread_id in thread_ids:
             detail = await self.fetch_content_detail(thread_id)
-            items.append(detail["note"])
-        return {
-            "items": items,
-            "has_more": bool(payload.get("data", {}).get("has_more")),
-            "next_cursor": str(page_number + 1) if payload.get("data", {}).get("has_more") else "",
-            "raw_payload": payload,
-            "request_uri": api_url,
-        }
+            items.append(detail.item)
+        has_more = bool(payload.get("data", {}).get("has_more"))
+        next_cursor = str(page_number + 1) if has_more else ""
+        normalized_records = normalize_tieba_notes([TiebaNote.model_validate(item) for item in items])
+        return CreatorContentsPage(
+            items=items,
+            has_more=has_more,
+            next_cursor=next_cursor,
+            raw_payload=payload,
+            request_uri=api_url,
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": api_url,
+                        "request_meta": {"creator_url": creator_url, "cursor": str(cursor or "")},
+                        "response_body": payload,
+                        "metadata": {"bridge": "tieba_connector", "normalized_count": len(normalized_records)},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Tieba bridge creator contents succeeded",
+                            "details": {"creator_url": creator_url, "items_count": len(items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": has_more,
+                        "next_cursor": next_cursor,
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()

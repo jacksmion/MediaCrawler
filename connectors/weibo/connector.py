@@ -5,7 +5,19 @@ from typing import Any
 from urllib.parse import parse_qs, unquote
 
 from connectors.base.base_connector import BaseConnector
-from connectors.base.models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from connectors.base.models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 from runtime.browser.executor import BrowserExecutor
 from runtime.http.executor import HttpExecutor
 from runtime.http.models import HttpRequest
@@ -14,6 +26,7 @@ from runtime.session.service import SessionService
 from .errors import WeiboDataFetchError
 from .fields import SearchType
 from .helpers import filter_search_result_card
+from .normalizer import normalize_weibo_note, normalize_weibo_notes
 
 
 class WeiboConnector(BaseConnector):
@@ -78,26 +91,84 @@ class WeiboConnector(BaseConnector):
         )
         cards = payload.get("cards", []) or []
         items = filter_search_result_card(cards)
+        normalized_records = normalize_weibo_notes(items)
         return SearchPage(
             items=items,
             has_more=bool(items),
             next_cursor=str(query.page + 1) if items else None,
             raw=payload,
-            metadata={"request_uri": "/api/container/getIndex", "keyword": query.keyword, "page": query.page},
+            metadata={
+                "request_uri": "/api/container/getIndex",
+                "keyword": query.keyword,
+                "page": query.page,
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "search",
+                        "source_uri": "/api/container/getIndex",
+                        "request_meta": {"keyword": query.keyword, "page": query.page},
+                        "response_body": payload,
+                        "metadata": {
+                            "bridge": "weibo_connector",
+                            "normalized_count": len(normalized_records),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "search_page_succeeded",
+                            "message": "Weibo bridge search page succeeded",
+                            "details": {
+                                "keyword": query.keyword,
+                                "page": query.page,
+                                "items_count": len(items),
+                            },
+                        }
+                    ],
+                    "response_payload": {
+                        "items": items,
+                        "normalized_records": normalized_records,
+                        "has_more": bool(items),
+                        "next_cursor": str(query.page + 1) if items else None,
+                        "raw": payload,
+                    },
+                },
+            },
         )
 
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> ContentDetailResult:
         response = await self._request_text(f"{self.host}/detail/{content_id}")
         match = __import__("re").search(r'var \$render_data = (\[.*?\])\[0\]', response, __import__("re").DOTALL)
         if not match:
             raise WeiboDataFetchError(f"Weibo detail payload could not be parsed for {content_id}")
         payload = json.loads(match.group(1))
         note = {"mblog": payload[0].get("status", {})}
-        return {
-            "note": note,
-            "raw_payload": response,
-            "request_uri": f"/detail/{content_id}",
-        }
+        normalized_record = normalize_weibo_note(note)
+        return ContentDetailResult(
+            item=note,
+            item_key="note",
+            raw_payload=response,
+            request_uri=f"/detail/{content_id}",
+            metadata={
+                "outcome": {
+                    "normalized_records": [normalized_record] if normalized_record is not None else [],
+                    "raw_record": {
+                        "record_type": "detail",
+                        "source_uri": f"/detail/{content_id}",
+                        "request_meta": {"note_id": content_id},
+                        "response_body": response,
+                        "metadata": {"bridge": "weibo_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "detail_succeeded",
+                            "message": "Weibo bridge detail succeeded",
+                            "details": {"note_id": content_id},
+                        }
+                    ],
+                    "response_payload": {"note": note},
+                }
+            },
+        )
 
     async def fetch_comments(
         self,
@@ -105,7 +176,7 @@ class WeiboConnector(BaseConnector):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> CommentsPage:
         max_id = int(cursor or -1)
         max_id_type = 0
         is_end = False
@@ -126,15 +197,41 @@ class WeiboConnector(BaseConnector):
             max_id = int(payload.get("max_id", 0) or 0)
             max_id_type = int(payload.get("max_id_type", 0) or 0)
             is_end = max_id == 0
-        return {
-            "comments": comments,
-            "cursor": max_id,
-            "has_more": not is_end,
-            "request_uri": "/comments/hotflow",
-            "raw_payload": raw_pages,
-        }
+        return CommentsPage(
+            comments=comments,
+            next_cursor=max_id,
+            has_more=not is_end,
+            request_uri="/comments/hotflow",
+            raw_payload=raw_pages,
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "comments",
+                        "source_uri": "/comments/hotflow",
+                        "request_meta": {"content_id": content_id, "cursor": cursor or -1, "limit": max_count},
+                        "response_body": raw_pages,
+                        "metadata": {
+                            "bridge": "weibo_connector",
+                            "comment_count": len(comments),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "comments_succeeded",
+                            "message": "Weibo bridge comments succeeded",
+                            "details": {"note_id": content_id, "comment_count": len(comments)},
+                        }
+                    ],
+                    "response_payload": {
+                        "comments": comments,
+                        "cursor": max_id,
+                        "has_more": not is_end,
+                    },
+                }
+            },
+        )
 
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> CreatorResult:
         payload = await self._get_json(
             "/api/container/getIndex",
             {
@@ -147,18 +244,37 @@ class WeiboConnector(BaseConnector):
         user_info = payload.get("userInfo", {})
         if not user_info:
             raise WeiboDataFetchError(f"Weibo creator payload missing userInfo for {creator_id}")
-        return {
-            "creator": user_info,
-            "raw_payload": payload,
-            "request_uri": "/api/container/getIndex",
-        }
+        return CreatorResult(
+            creator=user_info,
+            raw_payload=payload,
+            request_uri="/api/container/getIndex",
+            metadata={
+                "outcome": {
+                    "raw_record": {
+                        "record_type": "creator",
+                        "source_uri": "/api/container/getIndex",
+                        "request_meta": {"creator_id": creator_id},
+                        "response_body": payload,
+                        "metadata": {"bridge": "weibo_connector"},
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_succeeded",
+                            "message": "Weibo bridge creator succeeded",
+                            "details": {"creator_id": creator_id},
+                        }
+                    ],
+                    "response_payload": {"creator": user_info},
+                }
+            },
+        )
 
     async def fetch_creator_contents(
         self,
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> CreatorContentsPage:
         container_id = str((cursor or "").strip())
         since_id = ""
         if "|" in container_id:
@@ -177,13 +293,44 @@ class WeiboConnector(BaseConnector):
         )
         items = [item for item in payload.get("cards", []) if item.get("card_type") == 9]
         next_since = payload.get("cardlistInfo", {}).get("since_id", "0")
-        return {
-            "items": items[: int(limit or len(items) or 10)],
-            "has_more": bool(next_since and next_since != "0"),
-            "next_cursor": f"{container_id}|{next_since}" if next_since and next_since != "0" else "",
-            "raw_payload": payload,
-            "request_uri": "/api/container/getIndex",
-        }
+        result_items = items[: int(limit or len(items) or 10)]
+        normalized_records = normalize_weibo_notes(result_items)
+        next_cursor = f"{container_id}|{next_since}" if next_since and next_since != "0" else ""
+        return CreatorContentsPage(
+            items=result_items,
+            has_more=bool(next_since and next_since != "0"),
+            next_cursor=next_cursor,
+            raw_payload=payload,
+            request_uri="/api/container/getIndex",
+            metadata={
+                "outcome": {
+                    "normalized_records": normalized_records,
+                    "raw_record": {
+                        "record_type": "creator_contents",
+                        "source_uri": "/api/container/getIndex",
+                        "request_meta": {"creator_id": creator_id, "cursor": str(cursor or "")},
+                        "response_body": payload,
+                        "metadata": {
+                            "bridge": "weibo_connector",
+                            "normalized_count": len(normalized_records),
+                        },
+                    },
+                    "events": [
+                        {
+                            "event_type": "creator_contents_succeeded",
+                            "message": "Weibo bridge creator contents succeeded",
+                            "details": {"creator_id": creator_id, "items_count": len(result_items)},
+                        }
+                    ],
+                    "response_payload": {
+                        "items": result_items,
+                        "normalized_records": normalized_records,
+                        "has_more": bool(next_since and next_since != "0"),
+                        "next_cursor": next_cursor,
+                    },
+                }
+            },
+        )
 
     async def close(self) -> None:
         await self.browser_executor.close()

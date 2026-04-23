@@ -3,7 +3,19 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .models import AuthContext, AuthResult, ConnectorCapability, ConnectorContext, HealthStatus, SearchPage, SearchQuery
+from .models import (
+    AuthContext,
+    AuthResult,
+    CommentsPage,
+    ConnectorCapability,
+    ConnectorContext,
+    ContentDetailResult,
+    CreatorContentsPage,
+    CreatorResult,
+    HealthStatus,
+    SearchPage,
+    SearchQuery,
+)
 
 
 class BaseConnector(ABC):
@@ -33,7 +45,7 @@ class BaseConnector(ABC):
         """Search platform content using a normalized query."""
 
     @abstractmethod
-    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def fetch_content_detail(self, content_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any] | ContentDetailResult:
         """Fetch a single content detail payload."""
 
     @abstractmethod
@@ -43,11 +55,11 @@ class BaseConnector(ABC):
         cursor: str | int | None = None,
         limit: int | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | CommentsPage:
         """Fetch a page or batch of comments for a content item."""
 
     @abstractmethod
-    async def fetch_creator(self, creator_id: str) -> dict[str, Any]:
+    async def fetch_creator(self, creator_id: str) -> dict[str, Any] | CreatorResult:
         """Fetch a creator profile."""
 
     @abstractmethod
@@ -56,7 +68,7 @@ class BaseConnector(ABC):
         creator_id: str,
         cursor: str | int | None = None,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | CreatorContentsPage:
         """Fetch a creator's content list."""
 
     @abstractmethod
