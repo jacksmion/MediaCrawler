@@ -1,24 +1,49 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
+from collections.abc import Callable
 
 from schemas.tasks.models import CrawlTask
 from schemas.tasks.runtime import PlatformTaskResult
 
-from connectors.base.execution import BasePlatformHooks, ExecutionServices
+from connectors.base.base_connector import BaseConnector
+
+from .crawl_state_service import CrawlStateService
+from .event_service import EventService
+from .normalized_content_service import NormalizedContentService
+from .raw_record_service import RawRecordService
 
 from .platform_outcome_service import PlatformOutcomeService
 from .platform_task_service import PlatformTaskService
 
 
-class BaseTaskExecutor(ABC):
+@dataclass(slots=True)
+class ExecutionServices:
+    crawl_state_service: CrawlStateService
+    event_service: EventService
+    normalized_content_service: NormalizedContentService
+    raw_record_service: RawRecordService
+
+
+class TaskExecutor:
     platform_code: str
 
-    def __init__(self, crawler, *, planner, hooks: BasePlatformHooks, services: ExecutionServices) -> None:
+    def __init__(
+        self,
+        crawler,
+        *,
+        platform_code: str,
+        planner,
+        connector: BaseConnector,
+        connector_factory: Callable[[], BaseConnector],
+        services: ExecutionServices,
+    ) -> None:
         self.crawler = crawler
+        self.platform_code = platform_code
         self.planner = planner
-        self.hooks = hooks
+        self.connector = connector
+        self.connector_factory = connector_factory
         self.services = services
 
     async def execute(self, task: CrawlTask) -> dict[str, Any]:
@@ -33,13 +58,13 @@ class BaseTaskExecutor(ABC):
             schedule_type=task.schedule_type,
             priority=task.priority,
         )
-        job_id = self.hooks.make_job_id(task.task_type)
-        request = self.hooks.build_request(task, job_id)
-        connector = self.hooks.build_connector()
+        job_id = self.connector.make_job_id(task.task_type)
+        request = self.connector.build_request(task, job_id)
+        connector = self.connector_factory()
         task_service = PlatformTaskService(connector)
         job = await self.services.crawl_state_service.create_job(job_id=job_id, task=persisted_task)
-        await connector.prepare(self.hooks.build_connector_context(job_id=job_id, task_id=persisted_task.task_id))
-        started_event = self.hooks.build_started_event(task, job_id)
+        await connector.prepare(self.crawler._build_connector_context(job_id=job_id, task_id=persisted_task.task_id))
+        started_event = self.connector.build_started_event(task, job_id)
         if started_event is not None:
             await self.services.event_service.append(started_event, platform_code=self.platform_code)
         running_job = await self.services.crawl_state_service.mark_job_running(job)
@@ -47,7 +72,7 @@ class BaseTaskExecutor(ABC):
             result = await task_service.execute(request)
             await self.services.crawl_state_service.append_result(result)
             await self.services.crawl_state_service.mark_job_succeeded(running_job, metrics=result.metrics)
-            if self.hooks.use_generic_success_handling():
+            if self.connector.use_generic_success_handling():
                 payload = await PlatformOutcomeService.process_task_outcome(
                     self.services,
                     platform_code=self.platform_code,
@@ -55,7 +80,7 @@ class BaseTaskExecutor(ABC):
                     outcome=result.outcome,
                 )
             else:
-                payload = await self.hooks.handle_success(
+                payload = await self.connector.handle_success(
                     task=task,
                     request=request,
                     task_result=result,
@@ -64,9 +89,9 @@ class BaseTaskExecutor(ABC):
                     services=self.services,
                 )
             return {"job_id": job_id, "task_id": persisted_task.task_id, **payload}
-        except self.hooks.handled_exceptions as exc:  # type: ignore[misc]
+        except self.connector.handled_exceptions as exc:  # type: ignore[misc]
             error_message = str(exc)
-            error_code = self.hooks.classify_error(error_message)
+            error_code = self.connector.classify_error(error_message)
             failed_result = PlatformTaskResult(
                 job_id=job_id,
                 platform_code=self.platform_code,
@@ -77,7 +102,7 @@ class BaseTaskExecutor(ABC):
                 error_code=error_code,
                 error_message=error_message,
             )
-            failure_event = self.hooks.build_failure_event(
+            failure_event = self.connector.build_failure_event(
                 task=task,
                 job_id=job_id,
                 error_message=error_message,
@@ -93,7 +118,7 @@ class BaseTaskExecutor(ABC):
             )
             raise
         finally:
-            finished_event = self.hooks.build_finished_event(task, job_id)
+            finished_event = self.connector.build_finished_event(task, job_id)
             if finished_event is not None:
                 await self.services.event_service.append(finished_event, platform_code=self.platform_code)
             await connector.close()
@@ -125,17 +150,17 @@ class BaseTaskExecutor(ABC):
         }
 
     async def _execute_search_followups(self, base_results: list[dict[str, Any]], requirement: Any) -> list[dict[str, Any]]:
-        targets = self._collect_targets_from_results(base_results)
+        targets = self.connector.collect_targets_from_results(base_results)
         return await self._execute_content_followups(targets, requirement)
 
     async def _execute_detail_followups(self, base_results: list[dict[str, Any]], requirement: Any) -> list[dict[str, Any]]:
-        targets = self._collect_targets_from_results(base_results)
+        targets = self.connector.collect_targets_from_results(base_results)
         if not targets:
-            targets = self._collect_targets_from_requirement(requirement)
+            targets = self.connector.collect_targets_from_requirement(requirement)
         return await self._execute_content_followups(targets, requirement, include_detail=False)
 
     async def _execute_creator_followups(self, base_results: list[dict[str, Any]], requirement: Any) -> list[dict[str, Any]]:
-        targets = self._collect_targets_from_results(base_results)
+        targets = self.connector.collect_targets_from_results(base_results)
         return await self._execute_content_followups(targets, requirement)
 
     async def _execute_content_followups(
@@ -147,32 +172,13 @@ class BaseTaskExecutor(ABC):
     ) -> list[dict[str, Any]]:
         followup_tasks: list[CrawlTask] = []
         should_include_detail = requirement.include_detail if include_detail is None else include_detail
-        unique_targets = self._dedupe_targets(targets)
+        unique_targets = self.connector.dedupe_targets(targets)
         if should_include_detail:
             for index, target in enumerate(unique_targets, start=1):
-                followup_tasks.append(self._build_detail_task(target, index))
+                followup_tasks.append(self.connector.build_detail_task(target, index))
         if requirement.include_comments:
             for index, target in enumerate(unique_targets, start=1):
-                followup_tasks.append(self._build_comments_task(target, index, requirement.comment_limit))
+                followup_tasks.append(self.connector.build_comments_task(target, index, requirement.comment_limit))
         if not followup_tasks:
             return []
         return await self.execute_many(followup_tasks)
-
-    def _dedupe_targets(self, targets: list[Any]) -> list[Any]:
-        return targets
-
-    @abstractmethod
-    def _collect_targets_from_results(self, results: list[dict[str, Any]]) -> list[Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _collect_targets_from_requirement(self, requirement: Any) -> list[Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _build_detail_task(self, target: Any, index: int) -> CrawlTask:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _build_comments_task(self, target: Any, index: int, comment_limit: int | None) -> CrawlTask:
-        raise NotImplementedError
