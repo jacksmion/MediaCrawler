@@ -2,6 +2,6 @@
   "platform": "xhs",
   "crawler_type": "login",
   "login_type": "qrcode",
-  "save_option": "json",
+  "save_option": "jsonl",
   "headless": false
 }

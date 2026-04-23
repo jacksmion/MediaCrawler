@@ -2,14 +2,11 @@
   "platform": "xhs",
   "crawler_type": "search",
   "login_type": "qrcode",
-  "save_option": "json",
-  "headless": false,
-  "keywords": [
-    "露营咖啡"
-  ],
+  "save_option": "jsonl",
+  "keywords": "上海咖啡店",
   "start_page": 1,
   "max_pages": 1,
+  "enable_comments": true,
   "sort_type": "general",
-  "enable_comments": false,
-  "comment_limit": 5
+  "headless": false
 }

@@ -70,7 +70,7 @@ def create_app() -> FastAPI:
                 "uv",
                 "run",
                 "python",
-                "run_platform_requirement.py",
+                "cli.py",
                 "--help",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

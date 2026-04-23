@@ -1,0 +1,9 @@
+{
+  "platform": "dy",
+  "crawler_type": "detail",
+  "login_type": "qrcode",
+  "save_option": "jsonl",
+  "specified_ids": "7489357228253330742",
+  "enable_comments": true,
+  "headless": false
+}

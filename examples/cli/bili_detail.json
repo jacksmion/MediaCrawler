@@ -1,0 +1,9 @@
+{
+  "platform": "bili",
+  "crawler_type": "detail",
+  "login_type": "qrcode",
+  "save_option": "jsonl",
+  "specified_ids": "BV1xx411c7mD",
+  "enable_comments": true,
+  "headless": false
+}

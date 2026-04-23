@@ -3,10 +3,7 @@
   "crawler_type": "creator",
   "login_type": "qrcode",
   "save_option": "jsonl",
-  "headless": false,
-  "creator_ids": [
-    "https://www.zhihu.com/people/example-user"
-  ],
+  "creator_ids": "https://www.zhihu.com/people/example",
   "enable_comments": false,
-  "comment_limit": 10
+  "headless": false
 }

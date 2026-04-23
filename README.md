@@ -6,7 +6,7 @@ MediaCrawler 是一个社交媒体采集项目，当前支持通过统一 runtim
 
 当前主执行链已经迁移到 `connectors + runtime + application/services`：
 
-- CLI 入口: [run_platform_requirement.py](D:/workspace/MediaCrawler/run_platform_requirement.py:1)
+- CLI 入口: [cli.py](D:/workspace/MediaCrawler/cli.py:1)
 - API 入口: [api/main.py](D:/workspace/MediaCrawler/api/main.py:1)
 - WebUI 前端: [webui-react](D:/workspace/MediaCrawler/webui-react)
 
@@ -57,18 +57,18 @@ uv run playwright install chromium
 
 ### 1. 直接运行 CLI
 
-项目当前推荐入口是 [run_platform_requirement.py](D:/workspace/MediaCrawler/run_platform_requirement.py:1)。
+项目当前推荐入口是 [cli.py](D:/workspace/MediaCrawler/cli.py:1)。
 
 使用示例 JSON：
 
 ```powershell
-uv run .\run_platform_requirement.py --request-json .\examples\run_platform_requirement\dy_search.json
+uv run .\cli.py --request-json .\examples\cli\dy_search.json
 ```
 
 也可以直接传参数：
 
 ```powershell
-uv run .\run_platform_requirement.py `
+uv run .\cli.py `
   --platform dy `
   --mode search `
   --save-option jsonl `
@@ -80,7 +80,7 @@ uv run .\run_platform_requirement.py `
 ### 2. 仅进行登录
 
 ```powershell
-uv run .\run_platform_requirement.py --request-json .\examples\run_platform_requirement\xhs_login.json
+uv run .\cli.py --request-json .\examples\cli\xhs_login.json
 ```
 
 ### 3. 启动 API
@@ -110,7 +110,7 @@ npm run dev
 
 ## CLI 使用方式
 
-`run_platform_requirement.py` 支持两种 `--request-json` 形式：
+`cli.py` 支持两种 `--request-json` 形式：
 
 1. 直接传 JSON 字符串
 2. 直接传 JSON 文件路径
@@ -118,13 +118,13 @@ npm run dev
 例如：
 
 ```powershell
-$req = Get-Content .\examples\run_platform_requirement\dy_search.json -Raw
-uv run .\run_platform_requirement.py --request-json $req
+$req = Get-Content .\examples\cli\dy_search.json -Raw
+uv run .\cli.py --request-json $req
 ```
 
 示例文件位于：
 
-- [examples/run_platform_requirement](D:/workspace/MediaCrawler/examples/run_platform_requirement)
+- [examples/cli](D:/workspace/MediaCrawler/examples/cli)
 
 其中包括：
 
