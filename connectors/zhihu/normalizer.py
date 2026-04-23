@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from model.m_zhihu import ZhihuContent
+from .models import ZhihuContent
 from schemas.normalized.entities import ContentRecord
 
 

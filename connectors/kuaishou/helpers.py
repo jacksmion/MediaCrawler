@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from model.m_kuaishou import CreatorUrlInfo, VideoUrlInfo
+from .models import CreatorUrlInfo, VideoUrlInfo
 
 
 def parse_video_info_from_url(url: str) -> VideoUrlInfo:

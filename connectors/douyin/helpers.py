@@ -8,7 +8,7 @@ import execjs
 from playwright.async_api import Page
 
 import config
-from model.m_douyin import CreatorUrlInfo, VideoUrlInfo
+from .models import CreatorUrlInfo, VideoUrlInfo
 from schemas.tasks.runtime import PlatformTaskRequest
 from tools.crawler_util import extract_url_params_to_dict
 

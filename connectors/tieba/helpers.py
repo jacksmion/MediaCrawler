@@ -8,8 +8,8 @@ from urllib.parse import parse_qs, unquote
 
 from parsel import Selector
 
-from constant import baidu_tieba as const
-from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote
+from . import constants as const
+from .models import TiebaComment, TiebaCreator, TiebaNote
 from tools import utils
 
 GENDER_MALE = "sex_male"

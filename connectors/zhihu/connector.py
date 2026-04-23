@@ -17,8 +17,8 @@ from connectors.base.models import (
     SearchPage,
     SearchQuery,
 )
-from constant import zhihu as zhihu_constant
-from model.m_zhihu import ZhihuContent
+from . import constants as zhihu_constant
+from .models import ZhihuContent
 from schemas.tasks.models import CrawlJobEvent, CrawlTask
 from schemas.tasks.runtime import PlatformTaskRequest
 from runtime.browser.executor import BrowserExecutor

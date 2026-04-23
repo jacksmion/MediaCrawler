@@ -5,7 +5,7 @@ import urllib.parse
 from hashlib import md5
 from typing import Any
 
-from model.m_bilibili import CreatorUrlInfo, VideoUrlInfo
+from .models import CreatorUrlInfo, VideoUrlInfo
 from tools import utils
 
 

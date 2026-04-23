@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from model.m_baidu_tieba import TiebaNote
+from .models import TiebaNote
 from schemas.normalized.entities import ContentRecord
 
 

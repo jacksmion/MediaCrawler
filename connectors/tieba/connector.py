@@ -18,8 +18,8 @@ from connectors.base.models import (
     SearchPage,
     SearchQuery,
 )
-from constant import baidu_tieba as tieba_constant
-from model.m_baidu_tieba import TiebaCreator, TiebaNote
+from . import constants as tieba_constant
+from .models import TiebaCreator, TiebaNote
 from schemas.tasks.models import CrawlJobEvent, CrawlTask
 from schemas.tasks.runtime import PlatformTaskRequest
 from runtime.browser.executor import BrowserExecutor

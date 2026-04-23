@@ -4,7 +4,7 @@ import random
 import re
 import time
 
-from model.m_xiaohongshu import CreatorUrlInfo, NoteUrlInfo
+from .models import CreatorUrlInfo, NoteUrlInfo
 from tools.crawler_util import extract_url_params_to_dict
 
 
