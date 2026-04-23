@@ -34,6 +34,7 @@ from .event_service import EventService
 from .normalized_content_service import NormalizedContentService
 from .raw_record_service import RawRecordService
 from runtime.storage.persistence import uses_relational_backend
+from connectors import build_connector_from_runtime
 
 
 def _split_csv(value: str) -> list[str]:
@@ -60,13 +61,34 @@ class ConnectorCrawlerBase(AbstractCrawler):
         self.task_executor = self._build_task_executor()
 
     def _build_task_executor(self):
-        raise NotImplementedError
+        from .task_executor import ExecutionServices
+        from .task_planner import TaskPlanner
+        from .task_executor import TaskExecutor
+
+        connector = self._build_runtime_connector()
+
+        return TaskExecutor(
+            self,
+            platform_code=self.platform_name,
+            planner=TaskPlanner(connector),
+            connector=connector,
+            connector_factory=self._build_runtime_connector,
+            services=ExecutionServices(
+                crawl_state_service=self.crawl_state_service,
+                event_service=self.event_service,
+                normalized_content_service=self.normalized_content_service,
+                raw_record_service=self.raw_record_service,
+            ),
+        )
 
     def _build_requirement_from_runtime_config(self):
         raise NotImplementedError
 
     def _build_connector_for_health_check(self):
-        raise NotImplementedError
+        return self._build_runtime_connector()
+
+    def _build_runtime_connector(self):
+        return build_connector_from_runtime(self.platform_name, self)
 
     async def _initialize_runtime(self, playwright: Playwright) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -237,26 +259,7 @@ class XhsConnectorCrawler(ConnectorCrawlerBase):
         super().__init__()
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.xhs import build_xhs_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_xhs_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="xhs",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_xhs_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     async def _after_page_ready(self, httpx_proxy: str | None) -> None:
         if self.browser_context is None or self.context_page is None:
@@ -292,9 +295,7 @@ class XhsConnectorCrawler(ConnectorCrawlerBase):
             await self.xhs_client.update_cookies(browser_context=self.browser_context)
 
     def _build_connector_for_health_check(self):
-        from connectors.xhs import build_xhs_connector_from_legacy
-
-        return build_xhs_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> XhsCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -330,31 +331,10 @@ class DouyinConnectorCrawler(ConnectorCrawlerBase):
     login_cls = DouYinLogin
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.douyin import build_douyin_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_douyin_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="douyin",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_douyin_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.douyin import build_douyin_connector_from_legacy
-
-        return build_douyin_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> DouyinCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -391,31 +371,10 @@ class KuaishouConnectorCrawler(ConnectorCrawlerBase):
     login_cls = KuaishouLogin
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.kuaishou import build_kuaishou_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_kuaishou_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="kuaishou",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_kuaishou_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.kuaishou import build_kuaishou_connector_from_legacy
-
-        return build_kuaishou_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> KuaishouCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -450,31 +409,10 @@ class BilibiliConnectorCrawler(ConnectorCrawlerBase):
     login_cls = BilibiliLogin
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.bilibili import build_bilibili_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_bilibili_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="bilibili",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_bilibili_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.bilibili import build_bilibili_connector_from_legacy
-
-        return build_bilibili_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> BilibiliCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -509,31 +447,10 @@ class WeiboConnectorCrawler(ConnectorCrawlerBase):
     login_cls = WeiboLogin
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.weibo import build_weibo_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_weibo_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="weibo",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_weibo_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.weibo import build_weibo_connector_from_legacy
-
-        return build_weibo_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> WeiboCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -570,31 +487,10 @@ class TiebaConnectorCrawler(ConnectorCrawlerBase):
     uses_stealth_script = False
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.tieba import build_tieba_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_tieba_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="tieba",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_tieba_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.tieba import build_tieba_connector_from_legacy
-
-        return build_tieba_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> TiebaCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
@@ -629,31 +525,10 @@ class ZhihuConnectorCrawler(ConnectorCrawlerBase):
     login_cls = ZhiHuLogin
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from connectors.zhihu import build_zhihu_connector_from_legacy
-
-        from .task_planner import TaskPlanner
-        from .task_executor import TaskExecutor
-        connector = build_zhihu_connector_from_legacy(self)
-
-        return TaskExecutor(
-            self,
-            platform_code="zhihu",
-            planner=TaskPlanner(connector),
-            connector=connector,
-            connector_factory=lambda: build_zhihu_connector_from_legacy(self),
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
-        )
+        return super()._build_task_executor()
 
     def _build_connector_for_health_check(self):
-        from connectors.zhihu import build_zhihu_connector_from_legacy
-
-        return build_zhihu_connector_from_legacy(self)
+        return super()._build_connector_for_health_check()
 
     def _build_requirement_from_runtime_config(self) -> ZhihuCrawlRequirement:
         mode = str(config.CRAWLER_TYPE)
