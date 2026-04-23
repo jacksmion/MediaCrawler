@@ -50,26 +50,30 @@ def _json_default(value: Any) -> Any:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a migrated platform crawl entry.")
-    parser.add_argument("--request-json", help="Serialized resolved crawler config payload.")
-    parser.add_argument("--platform", choices=list(PLATFORM_RUNNER_MODE_ATTR.keys()))
-    parser.add_argument("--mode", choices=["search", "detail", "creator", "login"])
-    parser.add_argument("--login-type", choices=["qrcode", "phone", "cookie"], help="Login type override.")
+    parser.add_argument("request", nargs="?", help="JSON file path or JSON string request payload.")
+    parser.add_argument("-j", "--request-json", help="Serialized resolved crawler config payload.")
+    parser.add_argument("-p", "--platform", choices=list(PLATFORM_RUNNER_MODE_ATTR.keys()))
+    parser.add_argument("-m", "--mode", choices=["search", "detail", "creator", "login"])
+    parser.add_argument("-l", "--login-type", choices=["qrcode", "phone", "cookie"], help="Login type override.")
     parser.add_argument(
+        "-o",
         "--save-option",
         choices=["csv", "db", "json", "jsonl", "sqlite", "mongodb", "excel", "postgres"],
         help="Data save option override.",
     )
     parser.add_argument("--cookies", default="", help="Cookie string override.")
     parser.add_argument("--headless", choices=["true", "false"], help="Headless mode override.")
-    parser.add_argument("--keyword", action="append", default=[], help="Search keyword. Repeatable.")
-    parser.add_argument("--specified-id", action="append", default=[], help="Detail-mode item id/url. Repeatable.")
-    parser.add_argument("--creator-id", action="append", default=[], help="Creator-mode item id/url. Repeatable.")
-    parser.add_argument("--start-page", type=int, default=1, help="Start page for search mode.")
-    parser.add_argument("--max-pages", type=int, default=1, help="Max pages for search mode.")
-    parser.add_argument("--sort-type", default="", help="Platform-specific search sort/type override.")
-    parser.add_argument("--include-comments", action="store_true", help="Enable comments crawling.")
+    parser.add_argument("-k", "--keyword", action="append", default=[], help="Search keyword. Repeatable.")
+    parser.add_argument("-i", "--specified-id", action="append", default=[], help="Detail-mode item id/url. Repeatable.")
+    parser.add_argument("-u", "--creator-id", action="append", default=[], help="Creator-mode item id/url. Repeatable.")
+    parser.add_argument("-s", "--start-page", type=int, default=1, help="Start page for search mode.")
+    parser.add_argument("-n", "--max-pages", type=int, default=1, help="Max pages for search mode.")
+    parser.add_argument("-t", "--sort-type", default="", help="Platform-specific search sort/type override.")
+    parser.add_argument("-c", "--include-comments", action="store_true", help="Enable comments crawling.")
     parser.add_argument("--comment-limit", type=int, help="Single-note comment limit override.")
     args = parser.parse_args()
+    if args.request and not args.request_json:
+        args.request_json = args.request
     if not args.request_json:
         if not args.platform or not args.mode:
             parser.error("--platform and --mode are required unless --request-json is provided")

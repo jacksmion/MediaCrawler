@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 from runtime.http import make_async_client
 from tools import utils
 
-from runtime.proxy import IpCache, IpInfoModel, ProxyProvider
-from runtime.proxy.types import ProviderNameEnum
+from ..base_proxy import IpCache, ProxyProvider
+from ..types import IpInfoModel, ProviderNameEnum
 
 DELTA_EXPIRED_SECOND = 5
 

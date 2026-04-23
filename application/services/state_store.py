@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -137,8 +137,8 @@ class StateStore:
             "platform_code": result.platform_code,
             "task_kind": result.task_kind,
             "success": result.success,
-            "payload": result.payload,
-            "metrics": result.metrics,
+            "payload": self._json_safe(result.payload),
+            "metrics": self._json_safe(result.metrics),
             "error_code": result.error_code,
             "error_message": result.error_message,
             "created_at": result.created_at.isoformat(),
@@ -153,7 +153,7 @@ class StateStore:
             "job_id": event.job_id,
             "event_type": event.event_type,
             "message": event.message,
-            "details": event.details,
+            "details": self._json_safe(event.details),
             "created_at": event.created_at.isoformat(),
         }
         return await self._append_snapshot(self.events_base_dir, platform_code, event.event_type, payload)
@@ -174,7 +174,7 @@ class StateStore:
                 payload = asdict(record)
                 if record.published_at is not None:
                     payload["published_at"] = record.published_at.isoformat()
-                file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                file.write(json.dumps(self._json_safe(payload), ensure_ascii=False) + "\n")
         return file_path
 
     async def append_raw_record(self, record: RawRecord) -> Path:
@@ -189,10 +189,10 @@ class StateStore:
             "record_type": record.record_type,
             "source_uri": record.source_uri,
             "fetched_at": record.fetched_at.isoformat(),
-            "request_meta": record.request_meta,
-            "response_body": record.response_body,
+            "request_meta": self._json_safe(record.request_meta),
+            "response_body": self._json_safe(record.response_body),
             "content_hash": record.content_hash,
-            "metadata": record.metadata,
+            "metadata": self._json_safe(record.metadata),
         }
         line = json.dumps(payload, ensure_ascii=False) + "\n"
         try:
@@ -404,7 +404,7 @@ class StateStore:
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / f"{snapshot_type}.jsonl"
         with file_path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            file.write(json.dumps(self._json_safe(payload), ensure_ascii=False) + "\n")
         return file_path
 
     @staticmethod
@@ -420,3 +420,17 @@ class StateStore:
         payload["started_at"] = job.started_at.isoformat() if job.started_at else None
         payload["ended_at"] = job.ended_at.isoformat() if job.ended_at else None
         return payload
+
+    @classmethod
+    def _json_safe(cls, value: Any) -> Any:
+        if is_dataclass(value):
+            return cls._json_safe(asdict(value))
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(key): cls._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [cls._json_safe(item) for item in value]
+        return value

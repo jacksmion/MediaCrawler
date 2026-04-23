@@ -62,25 +62,25 @@ uv run playwright install chromium
 使用示例 JSON：
 
 ```powershell
-uv run .\cli.py --request-json .\examples\cli\dy_search.json
+uv run .\cli.py .\examples\cli\dy_search.json
 ```
 
 也可以直接传参数：
 
 ```powershell
 uv run .\cli.py `
-  --platform dy `
-  --mode search `
-  --save-option jsonl `
-  --keyword 张家界 `
-  --start-page 1 `
-  --max-pages 1
+  -p dy `
+  -m search `
+  -o jsonl `
+  -k 张家界 `
+  -s 1 `
+  -n 1
 ```
 
 ### 2. 仅进行登录
 
 ```powershell
-uv run .\cli.py --request-json .\examples\cli\xhs_login.json
+uv run .\cli.py .\examples\cli\xhs_login.json
 ```
 
 ### 3. 启动 API
@@ -110,12 +110,17 @@ npm run dev
 
 ## CLI 使用方式
 
-`cli.py` 支持两种 `--request-json` 形式：
+`cli.py` 现在支持三种常用形式：
 
-1. 直接传 JSON 字符串
-2. 直接传 JSON 文件路径
+1. 直接把 JSON 文件路径作为位置参数传入
+2. 用 `--request-json` 传 JSON 文件路径
+3. 用 `--request-json` 传 JSON 字符串
 
 例如：
+
+```powershell
+uv run .\cli.py .\examples\cli\dy_search.json
+```
 
 ```powershell
 $req = Get-Content .\examples\cli\dy_search.json -Raw

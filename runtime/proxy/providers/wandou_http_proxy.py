@@ -5,8 +5,8 @@ from urllib.parse import urlencode
 from runtime.http import make_async_client
 from tools import utils
 
-from runtime.proxy import IpCache, IpGetError, ProxyProvider
-from runtime.proxy.types import IpInfoModel
+from ..base_proxy import IpCache, IpGetError, ProxyProvider
+from ..types import IpInfoModel
 
 
 class WanDouHttpProxy(ProxyProvider):
