@@ -7,10 +7,10 @@ from __future__ import annotations
 from typing import Type
 
 import config
-from base.base_crawler import AbstractCrawler
 from database import db
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
+from .contracts import AbstractCrawler
 from .connector_crawlers import (
     BilibiliConnectorCrawler,
     DouyinConnectorCrawler,

@@ -1,29 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 from collections.abc import Callable
 
+from connectors.base.models import CommentsPage, ContentDetailResult, CreatorContentsPage, CreatorResult, SearchQuery
 from schemas.tasks.models import CrawlTask
-from schemas.tasks.runtime import PlatformTaskResult
+from schemas.tasks.runtime import PlatformTaskRequest, PlatformTaskResult
 
 from connectors.base.base_connector import BaseConnector
 
-from .crawl_state_service import CrawlStateService
-from .event_service import EventService
-from .normalized_content_service import NormalizedContentService
-from .raw_record_service import RawRecordService
-
-from .platform_outcome_service import PlatformOutcomeService
-from .platform_task_service import PlatformTaskService
+from .state_store import StateStore
 
 
-@dataclass(slots=True)
-class ExecutionServices:
-    crawl_state_service: CrawlStateService
-    event_service: EventService
-    normalized_content_service: NormalizedContentService
-    raw_record_service: RawRecordService
+def _serialize_detail_payload(detail: dict[str, Any] | ContentDetailResult) -> dict[str, Any]:
+    if isinstance(detail, ContentDetailResult):
+        return detail.to_payload()
+    return detail
+
+
+def _serialize_comments_payload(comments: dict[str, Any] | CommentsPage) -> dict[str, Any]:
+    if isinstance(comments, CommentsPage):
+        return comments.to_payload()
+    return comments
+
+
+def _serialize_creator_payload(creator: dict[str, Any] | CreatorResult) -> dict[str, Any]:
+    if isinstance(creator, CreatorResult):
+        return creator.to_payload()
+    return creator
+
+
+def _serialize_creator_contents_payload(contents: dict[str, Any] | CreatorContentsPage) -> dict[str, Any]:
+    if isinstance(contents, CreatorContentsPage):
+        return contents.to_payload()
+    return contents
+
+
+def _extract_outcome(result_obj) -> dict[str, Any]:
+    metadata = getattr(result_obj, "metadata", None)
+    if isinstance(metadata, dict):
+        return metadata.get("outcome", {})
+    return {}
 
 
 class TaskExecutor:
@@ -34,23 +51,21 @@ class TaskExecutor:
         crawler,
         *,
         platform_code: str,
-        planner,
         connector: BaseConnector,
         connector_factory: Callable[[], BaseConnector],
-        services: ExecutionServices,
+        state_store: StateStore,
     ) -> None:
         self.crawler = crawler
         self.platform_code = platform_code
-        self.planner = planner
         self.connector = connector
         self.connector_factory = connector_factory
-        self.services = services
+        self.state_store = state_store
 
     async def execute(self, task: CrawlTask) -> dict[str, Any]:
         if task.platform_code != self.platform_code:
             raise ValueError(f"Unsupported platform for {self.__class__.__name__}: {task.platform_code}")
 
-        persisted_task = await self.services.crawl_state_service.create_task(
+        persisted_task = await self.state_store.create_task(
             task_id=task.task_id,
             platform_code=task.platform_code,
             task_type=task.task_type,
@@ -61,20 +76,18 @@ class TaskExecutor:
         job_id = self.connector.make_job_id(task.task_type)
         request = self.connector.build_request(task, job_id)
         connector = self.connector_factory()
-        task_service = PlatformTaskService(connector)
-        job = await self.services.crawl_state_service.create_job(job_id=job_id, task=persisted_task)
+        job = await self.state_store.create_job(job_id=job_id, task=persisted_task)
         await connector.prepare(self.crawler._build_connector_context(job_id=job_id, task_id=persisted_task.task_id))
         started_event = self.connector.build_started_event(task, job_id)
         if started_event is not None:
-            await self.services.event_service.append(started_event, platform_code=self.platform_code)
-        running_job = await self.services.crawl_state_service.mark_job_running(job)
+            await self.state_store.append_event(started_event, platform_code=self.platform_code)
+        running_job = await self.state_store.mark_job_running(job)
         try:
-            result = await task_service.execute(request)
-            await self.services.crawl_state_service.append_result(result)
-            await self.services.crawl_state_service.mark_job_succeeded(running_job, metrics=result.metrics)
+            result = await self._execute_platform_request(connector, request)
+            await self.state_store.append_result(result)
+            await self.state_store.mark_job_succeeded(running_job, metrics=result.metrics)
             if self.connector.use_generic_success_handling():
-                payload = await PlatformOutcomeService.process_task_outcome(
-                    self.services,
+                payload = await self.state_store.process_task_outcome(
                     platform_code=self.platform_code,
                     job_id=job_id,
                     outcome=result.outcome,
@@ -86,7 +99,7 @@ class TaskExecutor:
                     task_result=result,
                     job_id=job_id,
                     task_id=persisted_task.task_id,
-                    services=self.services,
+                    services=self.state_store,
                 )
             return {"job_id": job_id, "task_id": persisted_task.task_id, **payload}
         except self.connector.handled_exceptions as exc:  # type: ignore[misc]
@@ -108,9 +121,9 @@ class TaskExecutor:
                 error_message=error_message,
                 error_code=error_code,
             )
-            await self.services.event_service.append(failure_event, platform_code=self.platform_code)
-            await self.services.crawl_state_service.append_result(failed_result)
-            await self.services.crawl_state_service.mark_job_failed(
+            await self.state_store.append_event(failure_event, platform_code=self.platform_code)
+            await self.state_store.append_result(failed_result)
+            await self.state_store.mark_job_failed(
                 running_job,
                 error_code=failed_result.error_code,
                 error_message=error_message,
@@ -120,7 +133,7 @@ class TaskExecutor:
         finally:
             finished_event = self.connector.build_finished_event(task, job_id)
             if finished_event is not None:
-                await self.services.event_service.append(finished_event, platform_code=self.platform_code)
+                await self.state_store.append_event(finished_event, platform_code=self.platform_code)
             await connector.close()
 
     async def execute_many(self, tasks: list[CrawlTask]) -> list[dict[str, Any]]:
@@ -130,7 +143,7 @@ class TaskExecutor:
         return results
 
     async def execute_requirement(self, requirement: Any) -> dict[str, Any]:
-        planned_tasks = self.planner.plan(requirement)
+        planned_tasks = self.connector.plan_requirement(requirement)
         base_results = await self.execute_many(planned_tasks)
 
         if requirement.mode == "search":
@@ -182,3 +195,89 @@ class TaskExecutor:
         if not followup_tasks:
             return []
         return await self.execute_many(followup_tasks)
+
+    async def _execute_platform_request(self, connector: BaseConnector, request: PlatformTaskRequest) -> PlatformTaskResult:
+        if request.task_kind == "search":
+            query = SearchQuery(**request.payload)
+            page = await connector.search(query)
+            return PlatformTaskResult(
+                job_id=request.job_id,
+                platform_code=request.platform_code,
+                task_kind=request.task_kind,
+                success=True,
+                payload={
+                    "items": page.items,
+                    "has_more": page.has_more,
+                    "next_cursor": page.next_cursor,
+                    "raw": page.raw,
+                    "metadata": page.metadata,
+                },
+                outcome=_extract_outcome(page),
+                metrics={"items_count": len(page.items), "has_more": int(page.has_more)},
+            )
+        if request.task_kind == "detail":
+            content_id = str(request.payload["content_id"])
+            detail = await connector.fetch_content_detail(content_id, extra=request.payload.get("extra"))
+            return PlatformTaskResult(
+                job_id=request.job_id,
+                platform_code=request.platform_code,
+                task_kind=request.task_kind,
+                success=True,
+                payload=_serialize_detail_payload(detail),
+                outcome=_extract_outcome(detail),
+                metrics={"detail_count": 1},
+            )
+        if request.task_kind == "comments":
+            content_id = str(request.payload["content_id"])
+            comments = await connector.fetch_comments(
+                content_id=content_id,
+                cursor=request.payload.get("cursor"),
+                limit=request.payload.get("limit"),
+                extra=request.payload.get("extra"),
+            )
+            comments_payload = _serialize_comments_payload(comments)
+            return PlatformTaskResult(
+                job_id=request.job_id,
+                platform_code=request.platform_code,
+                task_kind=request.task_kind,
+                success=True,
+                payload=comments_payload,
+                outcome=_extract_outcome(comments),
+                metrics={
+                    "comment_count": len(comments_payload.get("comments", [])),
+                    "has_more": int(bool(comments_payload.get("has_more"))),
+                },
+            )
+        if request.task_kind == "creator":
+            creator_id = str(request.payload["creator_id"])
+            creator = await connector.fetch_creator(creator_id)
+            return PlatformTaskResult(
+                job_id=request.job_id,
+                platform_code=request.platform_code,
+                task_kind=request.task_kind,
+                success=True,
+                payload=_serialize_creator_payload(creator),
+                outcome=_extract_outcome(creator),
+                metrics={"creator_count": 1},
+            )
+        if request.task_kind == "creator_contents":
+            creator_id = str(request.payload["creator_id"])
+            contents = await connector.fetch_creator_contents(
+                creator_id=creator_id,
+                cursor=request.payload.get("cursor"),
+                limit=request.payload.get("limit"),
+            )
+            contents_payload = _serialize_creator_contents_payload(contents)
+            return PlatformTaskResult(
+                job_id=request.job_id,
+                platform_code=request.platform_code,
+                task_kind=request.task_kind,
+                success=True,
+                payload=contents_payload,
+                outcome=_extract_outcome(contents),
+                metrics={
+                    "items_count": len(contents_payload.get("items", [])),
+                    "has_more": int(bool(contents_payload.get("has_more"))),
+                },
+            )
+        raise ValueError(f"Unsupported task kind: {request.task_kind}")

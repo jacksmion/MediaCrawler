@@ -10,7 +10,6 @@ from typing import Any
 from playwright.async_api import BrowserContext, BrowserType, Page, Playwright, async_playwright
 
 import config
-from base.base_crawler import AbstractCrawler
 from database import db
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from tools import utils
@@ -23,11 +22,9 @@ from connectors.weibo.login import WeiboLogin
 from connectors.xhs.login import XiaoHongShuLogin
 from connectors.zhihu.login import ZhiHuLogin
 
-from .crawl_state_service import CrawlStateService
-from .event_service import EventService
-from .normalized_content_service import NormalizedContentService
-from .raw_record_service import RawRecordService
 from .runtime_requirement_mapper import build_requirement_from_runtime_config
+from .contracts import AbstractCrawler
+from .state_store import StateStore
 from runtime.storage.persistence import uses_relational_backend
 from connectors import build_connector_from_runtime
 
@@ -45,15 +42,10 @@ class ConnectorCrawlerBase(AbstractCrawler):
         self.cdp_manager: CDPBrowserManager | None = None
         self.ip_proxy_pool = None
         self._platform_http_proxy: str | None = None
-        self.crawl_state_service = CrawlStateService()
-        self.event_service = EventService()
-        self.normalized_content_service = NormalizedContentService()
-        self.raw_record_service = RawRecordService()
+        self.state_store = StateStore()
         self.task_executor = self._build_task_executor()
 
     def _build_task_executor(self):
-        from .task_executor import ExecutionServices
-        from .task_planner import TaskPlanner
         from .task_executor import TaskExecutor
 
         connector = self._build_runtime_connector()
@@ -61,15 +53,9 @@ class ConnectorCrawlerBase(AbstractCrawler):
         return TaskExecutor(
             self,
             platform_code=self.platform_name,
-            planner=TaskPlanner(connector),
             connector=connector,
             connector_factory=self._build_runtime_connector,
-            services=ExecutionServices(
-                crawl_state_service=self.crawl_state_service,
-                event_service=self.event_service,
-                normalized_content_service=self.normalized_content_service,
-                raw_record_service=self.raw_record_service,
-            ),
+            state_store=self.state_store,
         )
 
     def _build_requirement_from_runtime_config(self):

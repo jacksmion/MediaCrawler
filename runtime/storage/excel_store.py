@@ -19,11 +19,10 @@ except ImportError:
     EXCEL_AVAILABLE = False
 
 import config
-from base.base_crawler import AbstractStore
 from tools import utils
 
 
-class ExcelStoreBase(AbstractStore):
+class ExcelStoreBase:
     """Formatted Excel exporter shared by connector-native crawlers."""
 
     _instances: dict[str, "ExcelStoreBase"] = {}
@@ -54,7 +53,6 @@ class ExcelStoreBase(AbstractStore):
                 "openpyxl is required for Excel export. Install it with: pip install openpyxl"
             )
 
-        super().__init__()
         self.platform = platform
         self.crawler_type = crawler_type
 

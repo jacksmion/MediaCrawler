@@ -9,7 +9,7 @@ from playwright.async_api import BrowserContext, Page
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
 import config
-from base.base_crawler import AbstractApiClient
+from connectors.base.client import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
 from tools.httpx_util import make_async_client
