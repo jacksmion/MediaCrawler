@@ -15,8 +15,13 @@ from database import db
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
-
-from .platform_logins import BilibiliLogin, DouYinLogin, KuaishouLogin, BaiduTieBaLogin, WeiboLogin, XiaoHongShuLogin, ZhiHuLogin
+from connectors.bilibili.login import BilibiliLogin
+from connectors.douyin.login import DouYinLogin
+from connectors.kuaishou.login import KuaishouLogin
+from connectors.tieba.login import BaiduTieBaLogin
+from connectors.weibo.login import WeiboLogin
+from connectors.xhs.login import XiaoHongShuLogin
+from connectors.zhihu.login import ZhiHuLogin
 
 from .crawl_state_service import CrawlStateService
 from .event_service import EventService
