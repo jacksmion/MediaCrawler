@@ -20,13 +20,16 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 
 import config
 from application.services.crawler_runtime import CrawlerFactory, cleanup_runtime
+from application.services.requirement_mapper import (
+    apply_runtime_request_overrides,
+    build_requirement_from_request_payload,
+)
 from schemas.tasks.platform_mappings import (
     PLATFORM_CREATOR_LIST_ATTR,
     PLATFORM_DETAIL_LIST_ATTR,
     PLATFORM_RUNNER_MODE_ATTR,
     PLATFORM_SEARCH_PAGE_HINTS,
 )
-from schemas.tasks.requirements import CrawlRequirement
 from tools.app_runner import run
 
 
@@ -138,103 +141,6 @@ def _apply_runtime_overrides(args: argparse.Namespace) -> None:
         setattr(config, PLATFORM_CREATOR_LIST_ATTR[args.platform], creator_ids)
 
 
-def _apply_shared_runtime(payload: dict[str, Any]) -> None:
-    platform = str(payload["platform"])
-    mode = str(payload["crawler_type"])
-    config.PLATFORM = platform
-    config.CRAWLER_TYPE = mode
-    if payload.get("login_type"):
-        config.LOGIN_TYPE = str(payload["login_type"])
-    if payload.get("save_option"):
-        config.SAVE_DATA_OPTION = str(payload["save_option"])
-    if payload.get("cookies"):
-        config.COOKIES = str(payload["cookies"])
-    if payload.get("headless") is not None:
-        headless = bool(payload["headless"])
-        config.HEADLESS = headless
-        config.CDP_HEADLESS = headless
-    config.ENABLE_GET_COMMENTS = bool(payload.get("enable_comments", False))
-    if payload.get("comment_limit") is not None:
-        config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = int(payload["comment_limit"])
-
-
-def _build_requirement(payload: dict[str, Any]) -> Any:
-    platform = str(payload["platform"])
-    mode = str(payload["crawler_type"])
-    keywords = _split_csv(payload.get("keywords"))
-    specified_ids = _split_csv(payload.get("specified_ids"))
-    creator_ids = _split_csv(payload.get("creator_ids"))
-    shared = {
-        "mode": mode,
-        "start_page": int(payload.get("start_page", 1)),
-        "max_pages": int(payload.get("max_pages", 1)),
-        "include_comments": bool(payload.get("enable_comments", False)),
-        "comment_limit": payload.get("comment_limit"),
-        "metadata": {"source": "webui_api"},
-    }
-
-    if platform == "xhs":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            note_urls=specified_ids,
-            creator_urls=creator_ids,
-            sort_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
-            **shared,
-        )
-    if platform == "dy":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            aweme_ids=specified_ids,
-            creator_ids=creator_ids,
-            sort_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
-            **shared,
-        )
-    if platform == "wb":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            note_ids=specified_ids,
-            creator_ids=creator_ids,
-            search_type=str(payload["sort_type"]) if payload.get("sort_type") else None,
-            **shared,
-        )
-    if platform == "bili":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            video_ids=specified_ids,
-            creator_ids=creator_ids,
-            **shared,
-        )
-    if platform == "ks":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            video_ids=specified_ids,
-            creator_ids=creator_ids,
-            **shared,
-        )
-    if platform == "tieba":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            note_ids=specified_ids,
-            creator_urls=creator_ids,
-            **shared,
-        )
-    if platform == "zhihu":
-        return CrawlRequirement(
-            platform_code=platform,
-            keywords=keywords,
-            note_urls=specified_ids,
-            creator_urls=creator_ids,
-            **shared,
-        )
-    raise NotImplementedError(f"Requirement entry is not supported for platform: {platform}")
-
-
 def _apply_search_sort(platform: str, sort_type: str) -> None:
     if not sort_type:
         return
@@ -271,7 +177,7 @@ async def main() -> None:
     args = _parse_args()
     request_payload = _parse_request_payload(args)
     if request_payload:
-        _apply_shared_runtime(request_payload)
+        apply_runtime_request_overrides(request_payload)
         crawler = CrawlerFactory.create_crawler(platform=str(request_payload["platform"]))
         if str(request_payload["crawler_type"]) == "login":
             await crawler.start()
@@ -287,7 +193,7 @@ async def main() -> None:
                 )
             )
             return
-        requirement = _build_requirement(request_payload)
+        requirement = build_requirement_from_request_payload(request_payload, source="webui_api")
         result = await crawler.start_with_requirement(requirement)
         summary = {
             "mode": "requirement_entry",

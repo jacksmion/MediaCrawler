@@ -17,34 +17,61 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 import asyncio
-import os
-from pathlib import Path
+import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
+from application.services.crawler_runtime import CrawlerFactory, cleanup_runtime
+from application.services.requirement_mapper import (
+    apply_runtime_request_overrides,
+    build_requirement_from_request_payload,
+    merge_request_with_runtime_overrides,
+)
+from application.services.runtime_config_service import RuntimeConfigService
 from ..schemas import CrawlerStartRequest, LogEntry
-from .crawler_command_builder import CrawlerCommandBuilder
-from .crawler_config_resolver import CrawlerConfigResolver
-from .crawler_execution_planner import CrawlerExecutionPlanner
-from .crawler_executor import CrawlerExecutor
-from .subprocess_crawler_executor import SubprocessCrawlerExecutor
 from .crawler_log_service import CrawlerLogService
-from .crawler_process_runtime import CrawlerProcessRuntime
+
+
+@dataclass(slots=True)
+class InProcessCrawlerHandle:
+    task: asyncio.Task
+
+
+@dataclass(slots=True)
+class CrawlerRuntimeState:
+    handle: Optional[object] = None
+    status: str = "idle"
+    started_at: Optional[datetime] = None
+    current_config: Optional[object] = None
+
+
+class ApiLogHandler(logging.Handler):
+    def __init__(self, log_service: CrawlerLogService) -> None:
+        super().__init__(level=logging.INFO)
+        self.log_service = log_service
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        message = self.format(record)
+        level = self.log_service.parse_level(record.levelname)
+        entry = self.log_service.create_entry(message, level)
+        loop.create_task(self.log_service.push(entry))
 
 
 class CrawlerManager:
     """Crawler process manager"""
 
-    def __init__(self, executor: CrawlerExecutor | None = None):
+    def __init__(self):
         self._lock = asyncio.Lock()
-        self.runtime = CrawlerProcessRuntime()
-        self.command_builder = CrawlerCommandBuilder()
-        self.config_resolver = CrawlerConfigResolver()
-        self.execution_planner = CrawlerExecutionPlanner(self.command_builder)
-        self.executor = executor or SubprocessCrawlerExecutor()
+        self.runtime = CrawlerRuntimeState()
+        self.runtime_config_service = RuntimeConfigService()
         self.log_service = CrawlerLogService()
-        self._read_task: Optional[asyncio.Task] = None
-        # Project root directory
-        self._project_root = Path(__file__).parent.parent.parent
 
     @property
     def logs(self) -> list[LogEntry]:
@@ -52,7 +79,7 @@ class CrawlerManager:
 
     @property
     def process(self):
-        return self.runtime.process
+        return self.runtime.handle
 
     @property
     def status(self) -> str:
@@ -77,30 +104,20 @@ class CrawlerManager:
     async def start(self, config: CrawlerStartRequest) -> bool:
         """Start crawler process"""
         async with self._lock:
-            if self.process and self.process.poll() is None:
+            if self.is_running():
                 return False
 
-            # Clear old logs
             self.log_service.reset()
-
-            resolved_config = await self.config_resolver.resolve(config)
-            execution_plan = self.execution_planner.build_plan(resolved_config)
-
-            # Build command line arguments
-            cmd = execution_plan.command
-
-            # Log start information
-            entry = self.log_service.create_entry(f"Starting crawler: {' '.join(cmd)}", "info")
-            await self._push_log(entry)
+            resolved_config = await self._resolve_config(config)
+            await self._push_log(
+                self.log_service.create_entry(
+                    f"Starting crawler in-process: platform={resolved_config.platform.value}, type={resolved_config.crawler_type.value}",
+                    "info",
+                )
+            )
 
             try:
-                self.runtime.process = await self.executor.start(
-                    cmd,
-                    cwd=self._project_root,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
-                )
-
-                from datetime import datetime
+                self.runtime.handle = InProcessCrawlerHandle(task=asyncio.create_task(self._run_crawler(resolved_config)))
                 self.runtime.status = "running"
                 self.runtime.started_at = datetime.now()
                 self.runtime.current_config = resolved_config
@@ -110,21 +127,12 @@ class CrawlerManager:
                     "success"
                 )
                 await self._push_log(entry)
-                entry = self.log_service.create_entry(
-                    f"Execution mode: {execution_plan.mode}",
-                    "debug",
-                )
-                await self._push_log(entry)
                 if resolved_config.runtime_override_keys:
                     entry = self.log_service.create_entry(
                         f"Applied runtime overrides: {', '.join(resolved_config.runtime_override_keys)}",
                         "debug",
                     )
                     await self._push_log(entry)
-
-                # Start log reading task
-                self._read_task = asyncio.create_task(self._read_output())
-
                 return True
             except Exception as e:
                 self.runtime.status = "error"
@@ -135,30 +143,25 @@ class CrawlerManager:
     async def stop(self) -> bool:
         """Stop crawler process"""
         async with self._lock:
-            if not self.process or self.process.poll() is not None:
+            if not self.is_running():
                 return False
 
             self.runtime.status = "stopping"
-            entry = self.log_service.create_entry("Sending SIGTERM to crawler process...", "warning")
+            entry = self.log_service.create_entry("Cancelling in-process crawler task...", "warning")
             await self._push_log(entry)
 
             try:
-                await self.executor.terminate(self.process)
-
-                # Wait for graceful exit (up to 15 seconds)
-                for _ in range(30):
-                    if not self.executor.is_running(self.process):
-                        break
-                    await asyncio.sleep(0.5)
-
-                # If still not exited, force kill
-                if self.executor.is_running(self.process):
-                    entry = self.log_service.create_entry("Process not responding, sending SIGKILL...", "warning")
-                    await self._push_log(entry)
-                    await self.executor.kill(self.process)
-
-                entry = self.log_service.create_entry("Crawler process terminated", "info")
-                await self._push_log(entry)
+                handle = self.process
+                if isinstance(handle, InProcessCrawlerHandle):
+                    handle.task.cancel()
+                    try:
+                        await asyncio.wait_for(handle.task, timeout=15.0)
+                    except asyncio.CancelledError:
+                        pass
+                    except asyncio.TimeoutError:
+                        entry = self.log_service.create_entry("Crawler cancellation timeout", "warning")
+                        await self._push_log(entry)
+                await self._push_log(self.log_service.create_entry("Crawler task terminated", "info"))
 
             except Exception as e:
                 entry = self.log_service.create_entry(f"Error stopping crawler: {str(e)}", "error")
@@ -166,11 +169,7 @@ class CrawlerManager:
 
             self.runtime.status = "idle"
             self.runtime.current_config = None
-
-            # Cancel log reading task
-            if self._read_task:
-                self._read_task.cancel()
-                self._read_task = None
+            self.runtime.handle = None
 
             return True
 
@@ -184,50 +183,53 @@ class CrawlerManager:
             "error_message": None
         }
 
-    async def _read_output(self):
-        """Asynchronously read process output"""
-        loop = asyncio.get_event_loop()
+    def is_running(self) -> bool:
+        handle = self.process
+        return isinstance(handle, InProcessCrawlerHandle) and not handle.task.done()
 
+    async def _run_crawler(self, resolved_config) -> None:
+        crawler = None
+        api_log_handler = ApiLogHandler(self.log_service)
+        logger = logging.getLogger("MediaCrawler")
         try:
-            while self.process and self.executor.is_running(self.process):
-                # Read a line in thread pool
-                line = await loop.run_in_executor(
-                    None, self.process.stdout.readline
+            logger.addHandler(api_log_handler)
+            payload = resolved_config.model_dump(mode="json")
+            apply_runtime_request_overrides(payload)
+            crawler = CrawlerFactory.create_crawler(platform=resolved_config.platform.value)
+            if resolved_config.crawler_type.value == "login":
+                await crawler.start()
+            else:
+                requirement = build_requirement_from_request_payload(
+                    resolved_config,
+                    source="webui_api",
                 )
-                if line:
-                    line = line.strip()
-                    if line:
-                        level = self.log_service.parse_level(line)
-                        entry = self.log_service.create_entry(line, level)
-                        await self._push_log(entry)
-
-            # Read remaining output
-            if self.process and self.process.stdout:
-                remaining = await loop.run_in_executor(
-                    None, self.process.stdout.read
-                )
-                if remaining:
-                    for line in remaining.strip().split('\n'):
-                        if line.strip():
-                            level = self.log_service.parse_level(line)
-                            entry = self.log_service.create_entry(line.strip(), level)
-                            await self._push_log(entry)
-
-            # Process ended
+                await crawler.start_with_requirement(requirement)
             if self.status == "running":
-                exit_code = self.executor.return_code(self.process) if self.process else -1
-                if exit_code == 0:
-                    entry = self.log_service.create_entry("Crawler completed successfully", "success")
-                else:
-                    entry = self.log_service.create_entry(f"Crawler exited with code: {exit_code}", "warning")
-                await self._push_log(entry)
+                await self._push_log(self.log_service.create_entry("Crawler completed successfully", "success"))
                 self.runtime.status = "idle"
-
         except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            entry = self.log_service.create_entry(f"Error reading output: {str(e)}", "error")
-            await self._push_log(entry)
+            await self._push_log(self.log_service.create_entry("Crawler task cancelled", "warning"))
+            self.runtime.status = "idle"
+            raise
+        except Exception as exc:
+            self.runtime.status = "error"
+            await self._push_log(self.log_service.create_entry(f"Crawler execution failed: {exc}", "error"))
+        finally:
+            logger.removeHandler(api_log_handler)
+            await cleanup_runtime(crawler)
+            self.runtime.handle = None
+
+    async def _resolve_config(self, request: CrawlerStartRequest):
+        config_payload = await self.runtime_config_service.get_all()
+        resolved_data = merge_request_with_runtime_overrides(
+            request.model_dump(),
+            config_payload["merged"],
+            override_keys=config_payload["overrides"],
+            explicit_fields=set(request.model_fields_set),
+        )
+        from ..schemas import ResolvedCrawlerConfig
+
+        return ResolvedCrawlerConfig(**resolved_data)
 
 
 # Global singleton

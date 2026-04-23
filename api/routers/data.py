@@ -16,185 +16,52 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-import os
-import json
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from datetime import datetime, timedelta
+from application.services.state_store import StateStore
 
 router = APIRouter(prefix="/data", tags=["data"])
-
-# Data directory
-DATA_DIR = Path(__file__).parent.parent.parent / "data"
-
-
-def get_file_info(file_path: Path) -> dict:
-    """Get file information"""
-    stat = file_path.stat()
-    record_count = None
-
-    # Try to get record count
-    try:
-        if file_path.suffix == ".json":
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    record_count = len(data)
-        elif file_path.suffix in (".csv", ".jsonl"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                record_count = sum(1 for _ in f)
-                if file_path.suffix == ".csv":
-                    record_count -= 1  # Subtract header row
-    except Exception:
-        pass
-
-    return {
-        "name": file_path.name,
-        "path": str(file_path.relative_to(DATA_DIR)),
-        "size": stat.st_size,
-        "modified_at": stat.st_mtime,
-        "record_count": record_count,
-        "type": file_path.suffix[1:] if file_path.suffix else "unknown"
-    }
+state_store = StateStore()
 
 
 @router.get("/files")
 async def list_data_files(platform: Optional[str] = None, file_type: Optional[str] = None):
     """Get data file list"""
-    if not DATA_DIR.exists():
-        return {"files": []}
-
-    files = []
-    supported_extensions = {".json", ".jsonl", ".csv", ".xlsx", ".xls"}
-
-    for root, dirs, filenames in os.walk(DATA_DIR):
-        root_path = Path(root)
-        for filename in filenames:
-            file_path = root_path / filename
-            if file_path.suffix.lower() not in supported_extensions:
-                continue
-
-            # Platform filter
-            if platform:
-                rel_path = str(file_path.relative_to(DATA_DIR))
-                if platform.lower() not in rel_path.lower():
-                    continue
-
-            # Type filter
-            if file_type and file_path.suffix[1:].lower() != file_type.lower():
-                continue
-
-            try:
-                files.append(get_file_info(file_path))
-            except Exception:
-                continue
-
-    # Sort by modification time (newest first)
-    files.sort(key=lambda x: x["modified_at"], reverse=True)
-
-    return {"files": files}
+    return {"files": state_store.list_data_files(platform=platform, file_type=file_type)}
 
 
 @router.get("/files/{file_path:path}")
 async def get_file_content(file_path: str, preview: bool = True, limit: int = 100):
     """Get file content or preview"""
-    full_path = DATA_DIR / file_path
-
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    if not full_path.is_file():
-        raise HTTPException(status_code=400, detail="Not a file")
-
-    # Security check: ensure within DATA_DIR
-    try:
-        full_path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-
     if preview:
-        # Return preview data
         try:
-            if full_path.suffix == ".json":
-                with open(full_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        return {"data": data[:limit], "total": len(data)}
-                    return {"data": data, "total": 1}
-            elif full_path.suffix == ".csv":
-                import csv
-                with open(full_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    rows = []
-                    for i, row in enumerate(reader):
-                        if i >= limit:
-                            break
-                        rows.append(row)
-                    # Re-read to get total count
-                    f.seek(0)
-                    total = sum(1 for _ in f) - 1
-                    return {"data": rows, "total": total}
-            elif full_path.suffix.lower() in (".xlsx", ".xls"):
-                import pandas as pd
-                # Read first limit rows
-                df = pd.read_excel(full_path, nrows=limit)
-                # Get total row count (only read first column to save memory)
-                df_count = pd.read_excel(full_path, usecols=[0])
-                total = len(df_count)
-                # Convert to list of dictionaries, handle NaN values
-                rows = df.where(pd.notnull(df), None).to_dict(orient='records')
-                return {
-                    "data": rows,
-                    "total": total,
-                    "columns": list(df.columns)
-                }
-            elif full_path.suffix == ".jsonl":
-                with open(full_path, "r", encoding="utf-8") as f:
-                    rows = []
-                    for i, line in enumerate(f):
-                        if i >= limit:
-                            break
-                        try:
-                            rows.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-                    # Re-read to get total count
-                    f.seek(0)
-                    total = sum(1 for _ in f)
-                    return {"data": rows, "total": total}
-            else:
-                raise HTTPException(status_code=400, detail="Unsupported file type for preview")
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON file")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    else:
-        # Return file download
-        return FileResponse(
-            path=full_path,
-            filename=full_path.name,
-            media_type="application/octet-stream"
-        )
+            return state_store.preview_data_file(file_path, limit=limit)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
+        except IsADirectoryError:
+            raise HTTPException(status_code=400, detail="Not a file")
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Access denied")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    return await download_file(file_path)
 
 
 @router.get("/download/{file_path:path}")
 async def download_file(file_path: str):
     """Download file"""
-    full_path = DATA_DIR / file_path
-
-    if not full_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    if not full_path.is_file():
-        raise HTTPException(status_code=400, detail="Not a file")
-
-    # Security check
     try:
-        full_path.resolve().relative_to(DATA_DIR.resolve())
-    except ValueError:
+        full_path = state_store.resolve_data_file(file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except IsADirectoryError:
+        raise HTTPException(status_code=400, detail="Not a file")
+    except PermissionError:
         raise HTTPException(status_code=403, detail="Access denied")
 
     return FileResponse(
@@ -207,81 +74,9 @@ async def download_file(file_path: str):
 @router.get("/stats")
 async def get_data_stats():
     """Get data statistics"""
-    if not DATA_DIR.exists():
-        return {"total_files": 0, "total_size": 0, "by_platform": {}, "by_type": {}}
-
-    stats = {
-        "total_files": 0,
-        "total_size": 0,
-        "by_platform": {},
-        "by_type": {}
-    }
-
-    supported_extensions = {".json", ".csv", ".xlsx", ".xls"}
-
-    for root, dirs, filenames in os.walk(DATA_DIR):
-        root_path = Path(root)
-        for filename in filenames:
-            file_path = root_path / filename
-            if file_path.suffix.lower() not in supported_extensions:
-                continue
-
-            try:
-                stat = file_path.stat()
-                stats["total_files"] += 1
-                stats["total_size"] += stat.st_size
-
-                # Statistics by type
-                file_type = file_path.suffix[1:].lower()
-                stats["by_type"][file_type] = stats["by_type"].get(file_type, 0) + 1
-
-                # Statistics by platform (inferred from path)
-                rel_path = str(file_path.relative_to(DATA_DIR))
-                for platform in ["xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu"]:
-                    if platform in rel_path.lower():
-                        stats["by_platform"][platform] = stats["by_platform"].get(platform, 0) + 1
-                        break
-            except Exception:
-                continue
-
-    return stats
+    return state_store.get_data_stats()
 
 @router.get("/stats/trends")
 async def get_data_trends(days: int = 7):
     """Get weekly data trends based on modification time"""
-    if not DATA_DIR.exists():
-        return {"trends": []}
-
-    trends = {}
-    today = datetime.now().date()
-    
-    # Pre-fill last N days with 0
-    for i in range(days):
-        date_str = (today - timedelta(days=i)).strftime("%Y-%m-%d")
-        trends[date_str] = 0
-
-    supported_extensions = {".json", ".jsonl", ".csv", ".xlsx", ".xls"}
-    
-    for root, dirs, filenames in os.walk(DATA_DIR):
-        for filename in filenames:
-            file_path = Path(root) / filename
-            if file_path.suffix.lower() not in supported_extensions:
-                continue
-                
-            try:
-                stat = file_path.stat()
-                mtime = datetime.fromtimestamp(stat.st_mtime).date()
-                date_str = mtime.strftime("%Y-%m-%d")
-                
-                if date_str in trends:
-                    # Try to count records (from get_file_info)
-                    info = get_file_info(file_path)
-                    count = info.get("record_count") or 0
-                    trends[date_str] += count
-            except Exception:
-                continue
-
-    # Convert to list of objects for ECharts/ChartJS
-    result = [{"date": d, "count": c} for d, c in sorted(trends.items())]
-    
-    return {"trends": result}
+    return state_store.get_data_trends(days=days)

@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from typing import Dict, Any
 
-from ..services import RuntimeConfigService
+from application.services.runtime_config_service import RuntimeConfigService
 
 router = APIRouter(prefix="/config", tags=["config"])
 runtime_config_service = RuntimeConfigService()
