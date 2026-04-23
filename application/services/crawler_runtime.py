@@ -7,10 +7,10 @@ from __future__ import annotations
 from typing import Type
 
 import config
-from database import db
 from tools.async_file_writer import AsyncFileWriter
 from var import crawler_type_var
 from .contracts import AbstractCrawler
+from runtime.storage import ExcelStoreBase, close_storage_backends
 from .connector_crawlers import (
     BilibiliConnectorCrawler,
     DouyinConnectorCrawler,
@@ -47,8 +47,6 @@ def flush_excel_if_needed() -> None:
         return
 
     try:
-        from runtime.storage import ExcelStoreBase
-
         ExcelStoreBase.flush_all()
         print("[Main] Excel files saved successfully")
     except Exception as e:
@@ -74,4 +72,4 @@ async def cleanup_runtime(crawler: AbstractCrawler | None) -> None:
         await crawler.close()
 
     if config.SAVE_DATA_OPTION in ("db", "sqlite", "postgres", "mongodb"):
-        await db.close()
+        await close_storage_backends()

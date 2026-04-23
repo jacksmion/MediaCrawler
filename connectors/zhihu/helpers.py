@@ -19,7 +19,7 @@ ZHIHU_SIGN_JS = None
 def sign(url: str, cookies: str) -> dict[str, Any]:
     global ZHIHU_SIGN_JS
     if not ZHIHU_SIGN_JS:
-        script_path = Path(__file__).resolve().parents[2] / "libs" / "zhihu.js"
+        script_path = Path(__file__).resolve().parents[2] / "runtime" / "assets" / "scripts" / "zhihu.js"
         ZHIHU_SIGN_JS = execjs.compile(script_path.read_text(encoding="utf-8-sig"))
     return ZHIHU_SIGN_JS.call("get_sign", url, cookies)
 

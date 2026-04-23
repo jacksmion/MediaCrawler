@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+from pathlib import Path
 from typing import Any
 
 import execjs
@@ -12,7 +13,8 @@ from .models import CreatorUrlInfo, VideoUrlInfo
 from schemas.tasks.runtime import PlatformTaskRequest
 from tools.crawler_util import extract_url_params_to_dict
 
-_douyin_sign_obj = execjs.compile(open("libs/douyin.js", encoding="utf-8-sig").read())
+_DOUYIN_SIGN_JS_PATH = Path(__file__).resolve().parents[2] / "runtime" / "assets" / "scripts" / "douyin.js"
+_douyin_sign_obj = execjs.compile(_DOUYIN_SIGN_JS_PATH.read_text(encoding="utf-8-sig"))
 
 
 def get_web_id() -> str:

@@ -10,9 +10,9 @@ from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wai
 
 import config
 from connectors.base.client import AbstractApiClient
-from proxy.proxy_mixin import ProxyRefreshMixin
+from runtime.proxy.proxy_mixin import ProxyRefreshMixin
+from runtime.http import make_async_client
 from tools import utils
-from tools.httpx_util import make_async_client
 
 from .client_exceptions import DataFetchError, IPBlockError, NoteNotFoundError
 from .extractor import XiaoHongShuExtractor
@@ -21,7 +21,7 @@ from .helpers import get_search_id
 from .playwright_sign import sign_with_playwright
 
 if TYPE_CHECKING:
-    from proxy.proxy_ip_pool import ProxyIpPool
+    from runtime.proxy.proxy_ip_pool import ProxyIpPool
 
 
 class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):

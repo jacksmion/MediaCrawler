@@ -209,13 +209,22 @@ uv run playwright install chromium
 
 ## 开发说明
 
-代码目前的主要分层如下：
+当前建议按下面的边界理解代码结构：
 
-- `connectors/`: 平台连接器实现
-- `runtime/`: 浏览器、HTTP、会话、签名、存储等运行时能力
-- `application/services/`: 平台任务编排与执行服务
-- `api/`: FastAPI 服务层
-- `webui-react/`: React 前端
+- `api/`、`webui-react/`、CLI 入口：只负责交互和启动
+- `application/services/`：只保留通用编排
+  - `crawler_runtime.py`
+  - `connector_crawlers.py`
+  - `requirement_mapper.py`
+  - `task_executor.py`
+  - `state_store.py`
+- `connectors/`：负责平台能力调用、平台结果归一化、平台错误标准化、平台登录适配
+- `runtime/`：负责浏览器、HTTP、代理、缓存、会话、签名、存储、脚本资源等运行时基础设施
+- `database/`：当前作为 `runtime/storage` 的数据库 backend 实现层使用
+
+主执行链是：
+
+`入口 -> application/services -> connectors -> runtime`
 
 如果要增加桌面窗口，当前最省事的路径是复用 `webui-react + FastAPI`，外面再包一层桌面壳，而不是重写一套原生桌面 UI。
 

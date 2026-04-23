@@ -10,7 +10,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from tenacity import RetryError, retry, retry_if_result, stop_after_attempt, wait_fixed
 
 import config
-from cache.cache_factory import CacheFactory
+from runtime.cache import CacheFactory
 from connectors.base.login import AbstractLogin
 from tools import utils
 

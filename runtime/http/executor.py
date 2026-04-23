@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from runtime.http.models import HttpRequest, HttpResponse
-from tools.httpx_util import make_async_client
+from runtime.http.client import make_async_client
 
 
 class HttpExecutor:

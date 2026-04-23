@@ -37,7 +37,7 @@ from PIL import Image, ImageDraw, ImageShow
 from playwright.async_api import Cookie, Page
 
 from . import utils
-from .httpx_util import make_async_client
+from runtime.http import make_async_client
 
 
 async def find_login_qrcode(page: Page, selector: str) -> str:
@@ -178,7 +178,7 @@ def match_interact_info_count(count_str: str) -> int:
 def format_proxy_info(ip_proxy_info) -> Tuple[Optional[Dict], Optional[str]]:
     """format proxy info for playwright and httpx"""
     # fix circular import issue
-    from proxy.proxy_ip_pool import IpInfoModel
+    from runtime.proxy.proxy_ip_pool import IpInfoModel
     ip_proxy_info = cast(IpInfoModel, ip_proxy_info)
 
     # Playwright proxy server should be in format "host:port" without protocol prefix

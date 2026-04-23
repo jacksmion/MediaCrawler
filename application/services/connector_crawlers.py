@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from playwright.async_api import BrowserContext, BrowserType, Page, Playwright, async_playwright
 
 import config
-from database import db
-from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
+from runtime.browser import CDPBrowserManager
+from runtime.proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
+from runtime.storage import init_storage_backends
 from tools import utils
-from tools.cdp_browser import CDPBrowserManager
 from connectors.bilibili.login import BilibiliLogin
 from connectors.douyin.login import DouYinLogin
 from connectors.kuaishou.login import KuaishouLogin
@@ -22,7 +23,7 @@ from connectors.weibo.login import WeiboLogin
 from connectors.xhs.login import XiaoHongShuLogin
 from connectors.zhihu.login import ZhiHuLogin
 
-from .runtime_requirement_mapper import build_requirement_from_runtime_config
+from .requirement_mapper import build_requirement_from_runtime_config
 from .contracts import AbstractCrawler
 from .state_store import StateStore
 from runtime.storage.persistence import uses_relational_backend
@@ -35,6 +36,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
     user_agent: str
     login_cls: type | None = None
     uses_stealth_script = True
+    stealth_script_path = Path(__file__).resolve().parents[2] / "runtime" / "assets" / "scripts" / "stealth.min.js"
 
     def __init__(self) -> None:
         self.context_page: Page | None = None
@@ -90,7 +92,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
                 headless=config.HEADLESS,
             )
             if self.uses_stealth_script:
-                await self.browser_context.add_init_script(path="libs/stealth.min.js")
+                await self.browser_context.add_init_script(path=str(self.stealth_script_path))
 
         self.context_page = await self.browser_context.new_page()
         await self.context_page.goto(self.index_url)
@@ -102,7 +104,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
 
     async def _ensure_persistence_ready(self) -> None:
         if uses_relational_backend():
-            await db.init_db(config.SAVE_DATA_OPTION)
+            await init_storage_backends(config.SAVE_DATA_OPTION)
 
     async def _after_page_ready(self, httpx_proxy: str | None) -> None:
         return None
