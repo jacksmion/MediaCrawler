@@ -111,6 +111,7 @@ export default function CommentViewer() {
       String(source.platform_content_id).toLowerCase().includes(needle)
     );
   });
+  const selectedSource = sources.find((source) => source.source_id === selectedSourceId) || null;
 
   if (!loading && sources.length === 0) {
     return (
@@ -176,6 +177,18 @@ export default function CommentViewer() {
 
         <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
           <header className="border-b border-slate-800 px-5 py-4">
+            {selectedSource ? (
+              <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-500">当前作品</div>
+                <div className="mt-2 line-clamp-2 text-sm font-semibold text-slate-100">{formatSourceTitle(selectedSource)}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                  <span>作品 ID：{selectedSource.platform_content_id}</span>
+                  <span>抖音号：{selectedSource.author_short_id || '-'}</span>
+                  <span>评论数：{selectedSource.comment_count}</span>
+                  <span>最新评论：{formatDateTime(selectedSource.latest_comment_at || selectedSource.updated_at)}</span>
+                </div>
+              </div>
+            ) : null}
             <div className="grid grid-cols-[minmax(0,1fr)_140px_140px_120px] gap-3">
               <input
                 type="text"
@@ -223,7 +236,7 @@ export default function CommentViewer() {
                   <th className="px-5 py-4">时间</th>
                   <th className="px-5 py-4">评论内容</th>
                   <th className="px-5 py-4">昵称</th>
-                  <th className="px-5 py-4">用户 ID</th>
+                  <th className="px-5 py-4">抖音号</th>
                   <th className="px-5 py-4">地区</th>
                   <th className="px-5 py-4">层级</th>
                   <th className="px-5 py-4">回复对象</th>
@@ -255,7 +268,7 @@ export default function CommentViewer() {
                         <div className="max-w-[340px] truncate text-slate-100">{comment.comment_text || '-'}</div>
                       </td>
                       <td className="px-5 py-4 text-slate-200">{comment.author_nickname || '-'}</td>
-                      <td className="px-5 py-4 font-mono text-xs text-slate-500">{comment.author_platform_id || '-'}</td>
+                      <td className="px-5 py-4 font-mono text-xs text-slate-500">{comment.author_short_id || comment.author_platform_id || '-'}</td>
                       <td className="px-5 py-4 text-slate-300">{comment.ip_location || '-'}</td>
                       <td className="px-5 py-4 text-slate-300">{comment.comment_level === 2 ? '二级回复' : '一级评论'}</td>
                       <td className="px-5 py-4 font-mono text-xs text-slate-500">{comment.parent_comment_id || '-'}</td>
@@ -284,7 +297,8 @@ export default function CommentViewer() {
                     ['评论 ID', selectedComment.platform_comment_id || '-'],
                     ['作品 ID', selectedComment.platform_content_id || '-'],
                     ['用户昵称', selectedComment.author_nickname || '-'],
-                    ['用户 ID', selectedComment.author_platform_id || '-'],
+                    ['抖音号', selectedComment.author_short_id || selectedComment.author_platform_id || '-'],
+                    ['平台 ID', selectedComment.author_platform_id || '-'],
                     ['IP 属地', selectedComment.ip_location || '-'],
                     ['主页地区', selectedComment.author_home_location || '-'],
                     ['评论层级', selectedComment.comment_level === 2 ? '二级回复' : '一级评论'],

@@ -11,7 +11,14 @@ export const SORT_OPTIONS = [
 
 export function formatDateTime(value) {
   if (!value) return '-';
-  const date = new Date(value);
+  let normalizedValue = value;
+  if (typeof value === 'number' && value < 10_000_000_000) {
+    normalizedValue = value * 1000;
+  } else if (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)) {
+    const numericValue = Number(value);
+    normalizedValue = numericValue < 10_000_000_000 ? numericValue * 1000 : numericValue;
+  }
+  const date = new Date(normalizedValue);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
 }

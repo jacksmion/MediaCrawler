@@ -17,6 +17,7 @@ class CommentViewRow:
     comment_level: int
     comment_text: str
     author_platform_id: str
+    author_short_id: str
     author_nickname: str
     author_avatar: str
     ip_location: str
@@ -33,20 +34,15 @@ class CommentReaderService:
         self.data_base_dir = Path(data_base_dir)
 
     def list_sources(self) -> list[dict[str, Any]]:
-        platform_dir = self.data_base_dir / "dy"
-        if not platform_dir.exists():
-            return []
-
         sources: dict[str, dict[str, Any]] = {}
-        for file_path in platform_dir.rglob("*.jsonl"):
-            if "comment" not in file_path.name.lower():
-                continue
-
-            for row in self._read_jsonl(file_path):
+        content_index = self._load_content_index()
+        for file_path in self._iter_comment_files():
+            for row in self._iter_comment_rows(file_path):
                 content_id = str(row.get("aweme_id") or row.get("platform_content_id") or "")
                 if not content_id:
                     continue
 
+                content_record = content_index.get(content_id, {})
                 source_id = f"dy:{content_id}:{file_path.relative_to(self.data_base_dir)}"
                 source = sources.setdefault(
                     source_id,
@@ -54,8 +50,25 @@ class CommentReaderService:
                         "source_id": source_id,
                         "platform_code": "dy",
                         "platform_content_id": content_id,
-                        "content_title": str(row.get("title") or row.get("aweme_title") or ""),
-                        "content_url": str(row.get("aweme_url") or ""),
+                        "content_title": str(
+                            row.get("title")
+                            or row.get("aweme_title")
+                            or content_record.get("title")
+                            or content_record.get("aweme_title")
+                            or ""
+                        ),
+                        "content_url": str(
+                            row.get("aweme_url")
+                            or row.get("url")
+                            or content_record.get("url")
+                            or content_record.get("aweme_url")
+                            or ""
+                        ),
+                        "author_short_id": str(
+                            content_record.get("author_short_id")
+                            or row.get("short_id")
+                            or ""
+                        ),
                         "comment_count": 0,
                         "latest_comment_at": None,
                         "updated_at": file_path.stat().st_mtime,
@@ -64,6 +77,19 @@ class CommentReaderService:
                 )
                 source["comment_count"] += 1
                 source["latest_comment_at"] = self._max_ts(source["latest_comment_at"], row.get("create_time"))
+                if not source["content_title"]:
+                    source["content_title"] = str(
+                        content_record.get("title") or content_record.get("aweme_title") or row.get("title") or row.get("aweme_title") or ""
+                    )
+                if not source["content_url"]:
+                    source["content_url"] = str(
+                        content_record.get("url") or content_record.get("aweme_url") or row.get("aweme_url") or row.get("url") or ""
+                    )
+                if not source["author_short_id"]:
+                    source["author_short_id"] = str(content_record.get("author_short_id") or row.get("short_id") or "")
+
+        for source in sources.values():
+            source["latest_comment_at"] = self._to_iso(source["latest_comment_at"])
 
         return sorted(sources.values(), key=lambda item: item["updated_at"], reverse=True)
 
@@ -81,7 +107,7 @@ class CommentReaderService:
         file_path, content_id = self._resolve_source_id(source_id)
         rows = [
             self._normalize_row(row, content_id=content_id)
-            for row in self._read_jsonl(file_path)
+            for row in self._iter_comment_rows(file_path)
             if str(row.get("aweme_id") or row.get("platform_content_id") or "") == content_id
         ]
 
@@ -106,7 +132,7 @@ class CommentReaderService:
 
     def get_comment_detail(self, *, source_id: str, comment_id: str) -> dict[str, Any]:
         file_path, content_id = self._resolve_source_id(source_id)
-        for row in self._read_jsonl(file_path):
+        for row in self._iter_comment_rows(file_path):
             normalized = self._normalize_row(row, content_id=content_id)
             if normalized.comment_id == comment_id:
                 payload = self._serialize_row(normalized)
@@ -131,6 +157,9 @@ class CommentReaderService:
         parent_comment_id = str(row.get("reply_id") or row.get("parent_comment_id") or "") or None
         root_comment_id = str(row.get("root_comment_id") or parent_comment_id or platform_comment_id)
         published_at = self._to_iso(row.get("create_time") or row.get("published_at"))
+        user_payload = row.get("user") if isinstance(row.get("user"), dict) else {}
+        avatar_thumb = user_payload.get("avatar_thumb") if isinstance(user_payload.get("avatar_thumb"), dict) else {}
+        avatar_urls = avatar_thumb.get("url_list") if isinstance(avatar_thumb.get("url_list"), list) else []
         return CommentViewRow(
             comment_id=f"dy:{content_id}:{platform_comment_id}",
             platform_comment_id=platform_comment_id,
@@ -139,10 +168,11 @@ class CommentReaderService:
             root_comment_id=root_comment_id,
             comment_level=2 if parent_comment_id else 1,
             comment_text=str(row.get("text") or row.get("content") or ""),
-            author_platform_id=str(row.get("user_id") or row.get("author_platform_id") or ""),
-            author_nickname=str(row.get("nickname") or row.get("author_nickname") or ""),
-            author_avatar=str(row.get("avatar") or row.get("author_avatar") or ""),
-            ip_location=str(row.get("ip_location") or row.get("ipLabel") or ""),
+            author_platform_id=str(row.get("user_id") or user_payload.get("uid") or row.get("author_platform_id") or ""),
+            author_short_id=str(row.get("short_id") or user_payload.get("short_id") or row.get("author_short_id") or ""),
+            author_nickname=str(row.get("nickname") or user_payload.get("nickname") or row.get("author_nickname") or ""),
+            author_avatar=str(row.get("avatar") or row.get("author_avatar") or (avatar_urls[0] if avatar_urls else "")),
+            ip_location=str(row.get("ip_location") or row.get("ip_label") or row.get("ipLabel") or ""),
             author_home_location=str(row.get("author_home_location") or ""),
             published_at=published_at,
             like_count=int(row.get("digg_count") or row.get("like_count") or 0),
@@ -150,6 +180,69 @@ class CommentReaderService:
             raw_payload=row,
             metadata={},
         )
+
+    def _iter_comment_files(self) -> list[Path]:
+        candidates = [
+            self.data_base_dir / "dy",
+            self.data_base_dir / "douyin" / "jsonl",
+            self.data_base_dir / "platform_runtime" / "raw" / "douyin",
+        ]
+        files: list[Path] = []
+        for base_dir in candidates:
+            if not base_dir.exists():
+                continue
+            for file_path in base_dir.rglob("*.jsonl"):
+                if "comment" in file_path.name.lower():
+                    files.append(file_path)
+        return files
+
+    def _iter_comment_rows(self, file_path: Path) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for parsed in self._read_jsonl(file_path):
+            response_body = parsed.get("response_body") if isinstance(parsed.get("response_body"), dict) else None
+            if response_body and isinstance(response_body.get("comments"), list):
+                rows.extend([row for row in response_body["comments"] if isinstance(row, dict)])
+                continue
+            rows.append(parsed)
+        return rows
+
+    def _load_content_index(self) -> dict[str, dict[str, Any]]:
+        index: dict[str, dict[str, Any]] = {}
+        for file_path in self._iter_content_files():
+            for row in self._read_jsonl(file_path):
+                content_id = str(row.get("platform_content_id") or row.get("aweme_id") or row.get("group_id") or "")
+                if not content_id:
+                    continue
+                existing = index.setdefault(content_id, {})
+                if not existing.get("title"):
+                    existing["title"] = row.get("title") or row.get("aweme_title") or row.get("desc") or row.get("body_text") or ""
+                if not existing.get("url"):
+                    existing["url"] = row.get("url") or row.get("aweme_url") or row.get("share_url") or ""
+                if not existing.get("author_short_id"):
+                    raw_payload = row.get("raw_payload") if isinstance(row.get("raw_payload"), dict) else {}
+                    author_payload = raw_payload.get("author") if isinstance(raw_payload.get("author"), dict) else {}
+                    existing["author_short_id"] = row.get("short_id") or author_payload.get("short_id") or ""
+        return index
+
+    def _iter_content_files(self) -> list[Path]:
+        candidates = [
+            self.data_base_dir / "platform_runtime" / "normalized" / "douyin" / "contents.jsonl",
+            self.data_base_dir / "platform_runtime" / "normalized" / "douyin",
+            self.data_base_dir / "douyin" / "jsonl",
+            self.data_base_dir / "dy",
+        ]
+        files: list[Path] = []
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            if candidate.is_file():
+                files.append(candidate)
+                continue
+            for file_path in candidate.rglob("*.jsonl"):
+                lower_name = file_path.name.lower()
+                if "content" in lower_name or "aweme" in lower_name or "detail" in lower_name:
+                    files.append(file_path)
+        return files
 
     def _serialize_row(self, row: CommentViewRow) -> dict[str, Any]:
         return {
@@ -161,6 +254,7 @@ class CommentReaderService:
             "comment_level": row.comment_level,
             "comment_text": row.comment_text,
             "author_platform_id": row.author_platform_id,
+            "author_short_id": row.author_short_id,
             "author_nickname": row.author_nickname,
             "author_avatar": row.author_avatar,
             "ip_location": row.ip_location,
@@ -193,7 +287,10 @@ class CommentReaderService:
         if isinstance(value, str) and "T" in value:
             return value
         try:
-            return datetime.fromtimestamp(int(value)).isoformat()
+            numeric_value = float(value)
+            if numeric_value > 10_000_000_000:
+                numeric_value /= 1000
+            return datetime.fromtimestamp(numeric_value).isoformat(timespec="seconds")
         except (TypeError, ValueError, OSError):
             return None
 

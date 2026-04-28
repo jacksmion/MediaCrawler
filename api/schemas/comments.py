@@ -9,6 +9,7 @@ class CommentSourceResponse(BaseModel):
     platform_content_id: str
     content_title: str = ""
     content_url: str = ""
+    author_short_id: str = ""
     comment_count: int = 0
     latest_comment_at: str | int | None = None
     updated_at: float
@@ -28,6 +29,7 @@ class CommentListItemResponse(BaseModel):
     comment_level: int
     comment_text: str
     author_platform_id: str = ""
+    author_short_id: str = ""
     author_nickname: str = ""
     author_avatar: str = ""
     ip_location: str = ""
