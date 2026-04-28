@@ -40,15 +40,6 @@ export default function TaskPanel() {
   }, [logs]);
 
   useEffect(() => {
-    // Sync default sort type when platform changes
-    if (selectedPlatform.id === 'dy') {
-      setSortType('0');
-    } else {
-      setSortType('general');
-    }
-  }, [selectedPlatform]);
-
-  useEffect(() => {
     const wsUrl = `ws://${window.location.hostname}:8080/api/ws/logs`;
     const statusUrl = `ws://${window.location.hostname}:8080/api/ws/status`;
     
@@ -105,12 +96,17 @@ export default function TaskPanel() {
     await fetch(`http://${window.location.hostname}:8080/api/crawler/stop`, { method: 'POST' });
   };
 
+  const handlePlatformChange = (platform) => {
+    setSelectedPlatform(platform);
+    setSortType(platform.id === 'dy' ? '0' : 'general');
+  };
+
   return (
     <div className="p-8 max-w-4xl mx-auto w-full space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="space-y-4">
           <label className="block text-sm font-medium text-slate-400">媒体平台</label>
-          <Listbox value={selectedPlatform} onChange={setSelectedPlatform}>
+          <Listbox value={selectedPlatform} onChange={handlePlatformChange}>
             <div className="relative mt-1">
               <Listbox.Button className="relative w-full cursor-default rounded-xl bg-slate-900 py-3 pl-4 pr-10 text-left border border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all hover:bg-slate-800 transition-colors">
                 <span className="block truncate font-medium">{selectedPlatform.name}</span>

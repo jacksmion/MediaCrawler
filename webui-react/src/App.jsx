@@ -5,12 +5,14 @@ import {
   FolderIcon, 
   UserGroupIcon, 
   Cog6ToothIcon,
-  CommandLineIcon
+  CommandLineIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 
 import Dashboard from './components/Dashboard';
 import TaskPanel from './components/TaskPanel';
 import DataExplorer from './components/DataExplorer';
+import CommentViewer from './components/CommentViewer';
 import AccountCenter from './components/AccountCenter';
 import Settings from './components/Settings';
 
@@ -22,6 +24,7 @@ export default function App() {
       case 'dashboard': return <Dashboard />;
       case 'task': return <TaskPanel />;
       case 'data': return <DataExplorer />;
+      case 'comments': return <CommentViewer />;
       case 'account': return <AccountCenter />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
@@ -61,6 +64,12 @@ export default function App() {
             active={activeTab === 'data'} 
             onClick={() => setActiveTab('data')} 
           />
+          <NavItem
+            icon={ChatBubbleLeftRightIcon}
+            label="评论查看"
+            active={activeTab === 'comments'}
+            onClick={() => setActiveTab('comments')}
+          />
           <NavItem 
             icon={UserGroupIcon} 
             label="账号管理" 
@@ -96,7 +105,8 @@ export default function App() {
   );
 }
 
-function NavItem({ icon: Icon, label, active, onClick }) {
+function NavItem(props) {
+  const { icon: Icon, label, active, onClick } = props;
   return (
     <button
       onClick={onClick}

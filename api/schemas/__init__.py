@@ -26,6 +26,7 @@ from .crawler import (
     CrawlerStatusResponse,
     LogEntry,
 )
+from .comments import CommentListItemResponse, CommentListResponse, CommentSourceListResponse, CommentSourceResponse
 
 __all__ = [
     "PlatformEnum",
@@ -36,4 +37,8 @@ __all__ = [
     "ResolvedCrawlerConfig",
     "CrawlerStatusResponse",
     "LogEntry",
+    "CommentSourceResponse",
+    "CommentSourceListResponse",
+    "CommentListItemResponse",
+    "CommentListResponse",
 ]

@@ -70,7 +70,8 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, color, unit }) {
+function StatCard(props) {
+  const { icon: Icon, label, value, color, unit } = props;
   return (
     <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl hover:border-slate-700 transition-all shadow-sm">
       <div className={`p-3 w-fit rounded-xl bg-slate-800 mb-4 ${color}`}>
