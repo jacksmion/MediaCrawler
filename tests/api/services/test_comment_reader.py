@@ -99,6 +99,41 @@ def test_list_sources_reads_runtime_raw_comment_batches(tmp_path: Path):
     assert row["author_avatar"] == "https://example.com/avatar.jpeg"
     assert row["ip_location"] == "北京"
     assert row["like_count"] == 2
+    assert row["comment_level"] == 1
+
+
+def test_list_comments_dedupes_repeated_runtime_comment_batches(tmp_path: Path):
+    comment_dir = tmp_path / "data" / "platform_runtime" / "raw" / "douyin"
+    comment_dir.mkdir(parents=True)
+    comment_file = comment_dir / "comments.jsonl"
+    comment_file.write_text(
+        "\n".join(
+            [
+                '{"platform_code":"douyin","record_type":"comments","source_uri":"/aweme/v1/web/comment/list/","fetched_at":"2026-04-28T12:12:01","request_meta":{"aweme_id":"7625693045963028899","cursor":0},"response_body":{"comments":[{"cid":"c1","text":"计划5.1去，四大两小","aweme_id":"7625693045963028899","create_time":1776612206,"reply_id":"0","user":{"uid":"u1","nickname":"阿青"}}],"cursor":20,"has_more":1},"metadata":{"comment_count":1,"cursor":20,"has_more":true}}',
+                '{"platform_code":"douyin","record_type":"comments","source_uri":"/aweme/v1/web/comment/list/","fetched_at":"2026-04-28T12:13:01","request_meta":{"aweme_id":"7625693045963028899","cursor":0},"response_body":{"comments":[{"cid":"c1","text":"计划5.1去，四大两小","aweme_id":"7625693045963028899","create_time":1776612206,"reply_id":"0","user":{"uid":"u1","nickname":"阿青"}}],"cursor":20,"has_more":1},"metadata":{"comment_count":1,"cursor":20,"has_more":true}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    service = CommentReaderService(data_base_dir=tmp_path / "data")
+    source_id = service.list_sources()[0]["source_id"]
+
+    sources = service.list_sources()
+    assert sources[0]["comment_count"] == 1
+
+    result = service.list_comments(
+        source_id=source_id,
+        keyword=None,
+        comment_level=None,
+        location=None,
+        limit=20,
+        offset=0,
+        sort="published_at_desc",
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["platform_comment_id"] == "c1"
 
 
 def test_list_sources_uses_normalized_content_title_when_available(tmp_path: Path):

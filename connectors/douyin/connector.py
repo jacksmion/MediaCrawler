@@ -461,6 +461,10 @@ class DouyinConnector(BaseConnector):
                 break
             page_comments = page_comments[:remaining]
             comments.extend(page_comments)
+        aggregated_payload = dict(last_payload or {})
+        aggregated_payload["comments"] = comments
+        aggregated_payload["cursor"] = root_cursor
+        aggregated_payload["has_more"] = has_more
         return CommentsPage(
             comments=comments,
             next_cursor=root_cursor,
@@ -474,7 +478,7 @@ class DouyinConnector(BaseConnector):
                         "record_type": "comments",
                         "source_uri": "/aweme/v1/web/comment/list/",
                         "request_meta": {"aweme_id": content_id, "limit": max_count, "cursor": cursor or 0},
-                        "response_body": last_payload or {"comments": comments, "cursor": root_cursor, "has_more": has_more},
+                        "response_body": aggregated_payload,
                         "metadata": {
                             "bridge": "douyin_connector",
                             "comment_count": len(comments),

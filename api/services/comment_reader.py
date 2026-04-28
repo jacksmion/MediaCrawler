@@ -35,6 +35,7 @@ class CommentReaderService:
 
     def list_sources(self) -> list[dict[str, Any]]:
         sources: dict[str, dict[str, Any]] = {}
+        seen_comment_ids: dict[str, set[str]] = {}
         content_index = self._load_content_index()
         for file_path in self._iter_comment_files():
             for row in self._iter_comment_rows(file_path):
@@ -75,6 +76,12 @@ class CommentReaderService:
                         "file_path": str(file_path.relative_to(self.data_base_dir)),
                     },
                 )
+                dedupe_key = str(row.get("cid") or row.get("comment_id") or row.get("platform_comment_id") or "")
+                if dedupe_key:
+                    source_seen = seen_comment_ids.setdefault(source_id, set())
+                    if dedupe_key in source_seen:
+                        continue
+                    source_seen.add(dedupe_key)
                 source["comment_count"] += 1
                 source["latest_comment_at"] = self._max_ts(source["latest_comment_at"], row.get("create_time"))
                 if not source["content_title"]:
@@ -110,6 +117,15 @@ class CommentReaderService:
             for row in self._iter_comment_rows(file_path)
             if str(row.get("aweme_id") or row.get("platform_content_id") or "") == content_id
         ]
+        deduped_rows: dict[str, CommentViewRow] = {}
+        for row in rows:
+            existing = deduped_rows.get(row.platform_comment_id)
+            if existing is None:
+                deduped_rows[row.platform_comment_id] = row
+                continue
+            if (row.published_at or "") >= (existing.published_at or ""):
+                deduped_rows[row.platform_comment_id] = row
+        rows = list(deduped_rows.values())
 
         if keyword:
             lowered_keyword = keyword.lower()
@@ -154,7 +170,8 @@ class CommentReaderService:
 
     def _normalize_row(self, row: dict[str, Any], *, content_id: str) -> CommentViewRow:
         platform_comment_id = str(row.get("cid") or row.get("comment_id") or row.get("platform_comment_id") or "")
-        parent_comment_id = str(row.get("reply_id") or row.get("parent_comment_id") or "") or None
+        raw_parent_comment_id = str(row.get("reply_id") or row.get("parent_comment_id") or "").strip()
+        parent_comment_id = raw_parent_comment_id if raw_parent_comment_id and raw_parent_comment_id != "0" else None
         root_comment_id = str(row.get("root_comment_id") or parent_comment_id or platform_comment_id)
         published_at = self._to_iso(row.get("create_time") or row.get("published_at"))
         user_payload = row.get("user") if isinstance(row.get("user"), dict) else {}

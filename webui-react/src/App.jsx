@@ -10,7 +10,7 @@ import {
 
 import Dashboard from './components/Dashboard';
 import TaskPanel from './components/TaskPanel';
-import CommentViewer from './components/CommentViewer';
+import MonitorConsole from './components/MonitorConsole';
 import AccountCenter from './components/AccountCenter';
 import Settings from './components/Settings';
 
@@ -21,7 +21,7 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
       case 'task': return <TaskPanel />;
-      case 'comments': return <CommentViewer />;
+      case 'monitors': return <MonitorConsole />;
       case 'account': return <AccountCenter />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
@@ -57,9 +57,9 @@ export default function App() {
           />
           <NavItem
             icon={ChatBubbleLeftRightIcon}
-            label="评论查看"
-            active={activeTab === 'comments'}
-            onClick={() => setActiveTab('comments')}
+            label="监控台"
+            active={activeTab === 'monitors'}
+            onClick={() => setActiveTab('monitors')}
           />
           <NavItem 
             icon={UserGroupIcon} 

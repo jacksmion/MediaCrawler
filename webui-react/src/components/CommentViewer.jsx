@@ -4,11 +4,11 @@ import { COMMENT_LEVEL_OPTIONS, SORT_OPTIONS, formatDateTime, formatSourceTitle 
 
 const API_BASE = `http://${window.location.hostname}:8080/api/comments`;
 
-export default function CommentViewer() {
+export default function CommentViewer(props) {
+  const { embedded = false, forcedContentId = '', forcedSourceId = '', hideSourceSummary = false } = props;
   const [sources, setSources] = useState([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [comments, setComments] = useState([]);
-  const [selectedComment, setSelectedComment] = useState(null);
   const [keyword, setKeyword] = useState('');
   const [commentLevel, setCommentLevel] = useState('');
   const [location, setLocation] = useState('');
@@ -17,6 +17,8 @@ export default function CommentViewer() {
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedComment, setSelectedComment] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -30,7 +32,11 @@ export default function CommentViewer() {
         const body = await response.json();
         const items = body.items || [];
         setSources(items);
-        setSelectedSourceId(items[0]?.source_id || '');
+        if (forcedSourceId) {
+          setSelectedSourceId(forcedSourceId);
+        } else if (!forcedContentId) {
+          setSelectedSourceId(items[0]?.source_id || '');
+        }
         setError('');
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败');
@@ -42,12 +48,23 @@ export default function CommentViewer() {
     };
 
     loadSources();
-  }, []);
+  }, [forcedContentId, forcedSourceId]);
+
+  useEffect(() => {
+    if (forcedSourceId) {
+      setSelectedSourceId(forcedSourceId);
+      return;
+    }
+    if (!forcedContentId) return;
+    const matched = sources.find((source) => String(source.platform_content_id) === String(forcedContentId));
+    setSelectedSourceId(matched?.source_id || '');
+  }, [forcedContentId, forcedSourceId, sources]);
 
   useEffect(() => {
     if (!selectedSourceId) {
       setComments([]);
       setSelectedComment(null);
+      setDetailOpen(false);
       return;
     }
 
@@ -71,10 +88,12 @@ export default function CommentViewer() {
         const body = await response.json();
         setComments(body.items || []);
         setSelectedComment(null);
+        setDetailOpen(false);
         setError('');
       } catch (err) {
         setComments([]);
         setSelectedComment(null);
+        setDetailOpen(false);
         setError(err instanceof Error ? err.message : '加载评论失败');
       } finally {
         setCommentsLoading(false);
@@ -94,6 +113,7 @@ export default function CommentViewer() {
       }
       const body = await response.json();
       setSelectedComment(body);
+      setDetailOpen(true);
       setError('');
     } catch (err) {
       setSelectedComment(null);
@@ -104,6 +124,9 @@ export default function CommentViewer() {
   };
 
   const visibleSources = sources.filter((source) => {
+    if (forcedContentId && String(source.platform_content_id) !== String(forcedContentId)) {
+      return false;
+    }
     const needle = sourceFilter.trim().toLowerCase();
     if (!needle) return true;
     return (
@@ -113,12 +136,17 @@ export default function CommentViewer() {
   });
   const selectedSource = sources.find((source) => source.source_id === selectedSourceId) || null;
 
-  if (!loading && sources.length === 0) {
+  const hasForcedSelection = Boolean(forcedContentId || forcedSourceId);
+  if (!loading && visibleSources.length === 0) {
     return (
-      <div className="p-8">
+      <div className={embedded ? 'h-full' : 'p-8'}>
         <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900/60 p-12 text-center text-slate-400">
-          <div className="text-lg font-semibold text-slate-200">暂未发现可查看的抖音评论数据</div>
-          <div className="mt-2 text-sm text-slate-500">请先完成一次抖音评论抓取，再回到这里查看评论。</div>
+          <div className="text-lg font-semibold text-slate-200">
+            {hasForcedSelection ? '当前监控项还没有可展示的评论数据' : '暂未发现可查看的抖音评论数据'}
+          </div>
+          <div className="mt-2 text-sm text-slate-500">
+            {hasForcedSelection ? '请先启动这个监控项并等待一次评论刷新完成。' : '请先完成一次抖音评论抓取，再回到这里查看评论。'}
+          </div>
           {error ? <div className="mt-4 text-sm text-rose-400">{error}</div> : null}
         </div>
       </div>
@@ -126,7 +154,8 @@ export default function CommentViewer() {
   }
 
   return (
-    <div className="h-full p-8">
+    <div className={`h-full ${embedded ? '' : 'p-8'}`}>
+      {!embedded ? (
       <div className="mb-6 flex items-end justify-between">
         <div>
           <h2 className="text-3xl font-black tracking-tight text-white">抖音评论查看</h2>
@@ -134,8 +163,10 @@ export default function CommentViewer() {
         </div>
         {error ? <div className="rounded-2xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 text-sm text-rose-300">{error}</div> : null}
       </div>
+      ) : null}
 
-      <div className="grid h-[calc(100%-88px)] grid-cols-[320px_minmax(0,1fr)_360px] gap-6">
+      <div className={`grid ${embedded ? 'h-full grid-cols-[minmax(0,1fr)]' : 'h-[calc(100%-88px)] grid-cols-[320px_minmax(0,1fr)]'} gap-6`}>
+        {!embedded ? (
         <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
           <header className="border-b border-slate-800 px-5 py-4">
             <h3 className="text-lg font-bold text-white">评论来源</h3>
@@ -174,10 +205,11 @@ export default function CommentViewer() {
             )}
           </div>
         </section>
+        ) : null}
 
         <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
           <header className="border-b border-slate-800 px-5 py-4">
-            {selectedSource ? (
+            {selectedSource && !hideSourceSummary ? (
               <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-500">当前作品</div>
                 <div className="mt-2 line-clamp-2 text-sm font-semibold text-slate-100">{formatSourceTitle(selectedSource)}</div>
@@ -188,8 +220,12 @@ export default function CommentViewer() {
                   <span>最新评论：{formatDateTime(selectedSource.latest_comment_at || selectedSource.updated_at)}</span>
                 </div>
               </div>
+            ) : embedded ? (
+              <div className="mb-4 rounded-2xl border border-dashed border-slate-800 bg-slate-950/50 px-4 py-3 text-sm text-slate-500">
+                正在为当前监控项匹配评论来源...
+              </div>
             ) : null}
-            <div className="grid grid-cols-[minmax(0,1fr)_140px_140px_120px] gap-3">
+            <div className="grid grid-cols-[minmax(0,1fr)_120px_120px_120px] gap-2.5">
               <input
                 type="text"
                 value={keyword}
@@ -230,29 +266,27 @@ export default function CommentViewer() {
           </header>
 
           <div className="flex-1 overflow-auto">
-            <table className="w-full min-w-[880px] border-collapse text-left text-sm">
-              <thead className="sticky top-0 bg-slate-900 text-[11px] uppercase tracking-wider text-slate-500">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead className="sticky top-0 bg-slate-900 text-[11px] uppercase tracking-[0.18em] text-slate-500">
                 <tr>
-                  <th className="px-5 py-4">时间</th>
-                  <th className="px-5 py-4">评论内容</th>
-                  <th className="px-5 py-4">昵称</th>
-                  <th className="px-5 py-4">抖音号</th>
-                  <th className="px-5 py-4">地区</th>
-                  <th className="px-5 py-4">层级</th>
-                  <th className="px-5 py-4">回复对象</th>
-                  <th className="px-5 py-4 text-right">点赞</th>
+                  <th className="px-4 py-3">时间</th>
+                  <th className="px-4 py-3">评论内容</th>
+                  <th className="px-4 py-3">用户</th>
+                  <th className="px-4 py-3">地区</th>
+                  <th className="px-4 py-3">类型</th>
+                  <th className="px-4 py-3 text-right">赞</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70">
                 {commentsLoading ? (
                   <tr>
-                    <td colSpan="8" className="px-5 py-8 text-center text-slate-500">
+                    <td colSpan="6" className="px-4 py-8 text-center text-slate-500">
                       正在加载评论列表...
                     </td>
                   </tr>
                 ) : comments.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="px-5 py-8 text-center text-slate-500">
+                    <td colSpan="6" className="px-4 py-8 text-center text-slate-500">
                       当前筛选条件下没有评论。
                     </td>
                   </tr>
@@ -263,16 +297,19 @@ export default function CommentViewer() {
                       onClick={() => handleSelectComment(comment.comment_id)}
                       className="cursor-pointer transition hover:bg-slate-800/40"
                     >
-                      <td className="px-5 py-4 whitespace-nowrap text-slate-400">{formatDateTime(comment.published_at)}</td>
-                      <td className="px-5 py-4">
-                        <div className="max-w-[340px] truncate text-slate-100">{comment.comment_text || '-'}</div>
+                      <td className="px-4 py-3 align-top whitespace-nowrap text-[13px] text-slate-400">{formatDateTime(comment.published_at)}</td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="max-w-[520px] truncate text-[15px] font-medium leading-6 text-slate-100">{comment.comment_text || '-'}</div>
                       </td>
-                      <td className="px-5 py-4 text-slate-200">{comment.author_nickname || '-'}</td>
-                      <td className="px-5 py-4 font-mono text-xs text-slate-500">{comment.author_short_id || comment.author_platform_id || '-'}</td>
-                      <td className="px-5 py-4 text-slate-300">{comment.ip_location || '-'}</td>
-                      <td className="px-5 py-4 text-slate-300">{comment.comment_level === 2 ? '二级回复' : '一级评论'}</td>
-                      <td className="px-5 py-4 font-mono text-xs text-slate-500">{comment.parent_comment_id || '-'}</td>
-                      <td className="px-5 py-4 text-right font-semibold text-emerald-400">{comment.like_count}</td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="max-w-[160px] truncate text-[14px] font-semibold text-slate-100">{comment.author_nickname || '-'}</div>
+                        <div className="mt-1 truncate font-mono text-[11px] text-slate-500">{comment.author_short_id || comment.author_platform_id || '-'}</div>
+                      </td>
+                      <td className="px-4 py-3 align-top text-[13px] text-slate-300">{comment.ip_location || '-'}</td>
+                      <td className="px-4 py-3 align-top text-[13px] text-slate-300">
+                        {comment.comment_level === 2 ? '回复' : '评论'}
+                      </td>
+                      <td className="px-4 py-3 align-top text-right text-[13px] font-semibold text-emerald-400">{comment.like_count}</td>
                     </tr>
                   ))
                 )}
@@ -280,46 +317,58 @@ export default function CommentViewer() {
             </table>
           </div>
         </section>
-
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
-          <header className="border-b border-slate-800 px-5 py-4">
-            <h3 className="text-lg font-bold text-white">评论详情</h3>
-            <p className="mt-1 text-xs text-slate-500">支持回看完整评论文本与原始 payload</p>
-          </header>
-          <div className="flex-1 overflow-y-auto px-5 py-4">
-            {detailLoading ? (
-              <div className="text-sm text-slate-500">正在加载评论详情...</div>
-            ) : selectedComment ? (
-              <div className="space-y-5">
-                <DetailBlock label="评论正文" value={selectedComment.comment_text || '-'} />
-                <DetailGrid
-                  items={[
-                    ['评论 ID', selectedComment.platform_comment_id || '-'],
-                    ['作品 ID', selectedComment.platform_content_id || '-'],
-                    ['用户昵称', selectedComment.author_nickname || '-'],
-                    ['抖音号', selectedComment.author_short_id || selectedComment.author_platform_id || '-'],
-                    ['平台 ID', selectedComment.author_platform_id || '-'],
-                    ['IP 属地', selectedComment.ip_location || '-'],
-                    ['主页地区', selectedComment.author_home_location || '-'],
-                    ['评论层级', selectedComment.comment_level === 2 ? '二级回复' : '一级评论'],
-                    ['父评论', selectedComment.parent_comment_id || '-'],
-                    ['根评论', selectedComment.root_comment_id || '-'],
-                    ['发布时间', formatDateTime(selectedComment.published_at)],
-                    ['点赞数', String(selectedComment.like_count ?? 0)],
-                    ['回复数', String(selectedComment.reply_count ?? 0)],
-                  ]}
-                />
-                <DetailBlock label="Metadata" value={JSON.stringify(selectedComment.metadata || {}, null, 2)} monospace />
-                <DetailBlock label="Raw Payload" value={JSON.stringify(selectedComment.raw_payload || {}, null, 2)} monospace />
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-8 text-center text-sm text-slate-500">
-                选择一条评论后，这里会展示完整详情。
-              </div>
-            )}
-          </div>
-        </section>
       </div>
+
+      {detailOpen ? (
+        <div className="absolute inset-0 z-30 flex justify-end bg-slate-950/55 backdrop-blur-sm">
+          <div className="flex h-full w-[460px] flex-col border-l border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/50">
+            <header className="flex items-start justify-between border-b border-slate-800 px-5 py-4">
+              <div>
+                <h3 className="text-xl font-bold text-white">评论详情</h3>
+                <p className="mt-1 text-xs text-slate-500">回看完整评论文本与原始 payload</p>
+              </div>
+              <button
+                onClick={() => setDetailOpen(false)}
+                className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
+              >
+                关闭
+              </button>
+            </header>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {detailLoading ? (
+                <div className="text-sm text-slate-500">正在加载评论详情...</div>
+              ) : selectedComment ? (
+                <div className="space-y-5">
+                  <DetailBlock label="评论正文" value={selectedComment.comment_text || '-'} />
+                  <DetailGrid
+                    items={[
+                      ['评论 ID', selectedComment.platform_comment_id || '-'],
+                      ['作品 ID', selectedComment.platform_content_id || '-'],
+                      ['用户昵称', selectedComment.author_nickname || '-'],
+                      ['抖音号', selectedComment.author_short_id || selectedComment.author_platform_id || '-'],
+                      ['平台 ID', selectedComment.author_platform_id || '-'],
+                      ['IP 属地', selectedComment.ip_location || '-'],
+                      ['主页地区', selectedComment.author_home_location || '-'],
+                      ['评论层级', selectedComment.comment_level === 2 ? '二级回复' : '一级评论'],
+                      ['父评论', selectedComment.parent_comment_id || '-'],
+                      ['根评论', selectedComment.root_comment_id || '-'],
+                      ['发布时间', formatDateTime(selectedComment.published_at)],
+                      ['点赞数', String(selectedComment.like_count ?? 0)],
+                      ['回复数', String(selectedComment.reply_count ?? 0)],
+                    ]}
+                  />
+                  <DetailBlock label="Metadata" value={JSON.stringify(selectedComment.metadata || {}, null, 2)} monospace />
+                  <DetailBlock label="Raw Payload" value={JSON.stringify(selectedComment.raw_payload || {}, null, 2)} monospace />
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-8 text-center text-sm text-slate-500">
+                  暂无可展示的评论详情。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

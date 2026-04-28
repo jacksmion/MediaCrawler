@@ -10,7 +10,7 @@ import subprocess
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import account_router, comments_router, config_router, crawler_router, data_router, websocket_router
+from .routers import account_router, comments_router, config_router, crawler_router, data_router, monitors_router, websocket_router
 from .settings import get_api_settings
 
 
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
 
     app.include_router(crawler_router, prefix="/api")
     app.include_router(comments_router, prefix="/api")
+    app.include_router(monitors_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
     app.include_router(websocket_router, prefix="/api")
     app.include_router(account_router, prefix="/api")

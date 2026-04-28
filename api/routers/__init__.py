@@ -17,11 +17,13 @@
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
 from . import comments
+from . import monitors
 from .comments import router as comments_router
+from .monitors import router as monitors_router
 from .crawler import router as crawler_router
 from .data import router as data_router
 from .websocket import router as websocket_router
 from .account import router as account_router
 from .config import router as config_router
 
-__all__ = ["comments", "comments_router", "crawler_router", "data_router", "websocket_router", "account_router", "config_router"]
+__all__ = ["comments", "monitors", "comments_router", "monitors_router", "crawler_router", "data_router", "websocket_router", "account_router", "config_router"]
