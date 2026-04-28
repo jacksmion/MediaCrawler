@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { 
   ChartBarIcon, 
   PlayIcon, 
-  FolderIcon, 
   UserGroupIcon, 
   Cog6ToothIcon,
   CommandLineIcon,
@@ -11,7 +10,6 @@ import {
 
 import Dashboard from './components/Dashboard';
 import TaskPanel from './components/TaskPanel';
-import DataExplorer from './components/DataExplorer';
 import CommentViewer from './components/CommentViewer';
 import AccountCenter from './components/AccountCenter';
 import Settings from './components/Settings';
@@ -23,7 +21,6 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
       case 'task': return <TaskPanel />;
-      case 'data': return <DataExplorer />;
       case 'comments': return <CommentViewer />;
       case 'account': return <AccountCenter />;
       case 'settings': return <Settings />;
@@ -57,12 +54,6 @@ export default function App() {
             label="采集工场" 
             active={activeTab === 'task'} 
             onClick={() => setActiveTab('task')} 
-          />
-          <NavItem 
-            icon={FolderIcon} 
-            label="数据中心" 
-            active={activeTab === 'data'} 
-            onClick={() => setActiveTab('data')} 
           />
           <NavItem
             icon={ChatBubbleLeftRightIcon}
