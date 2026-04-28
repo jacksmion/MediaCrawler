@@ -16,10 +16,12 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
+from . import comments
+from .comments import router as comments_router
 from .crawler import router as crawler_router
 from .data import router as data_router
 from .websocket import router as websocket_router
 from .account import router as account_router
 from .config import router as config_router
 
-__all__ = ["crawler_router", "data_router", "websocket_router", "account_router", "config_router"]
+__all__ = ["comments", "comments_router", "crawler_router", "data_router", "websocket_router", "account_router", "config_router"]
