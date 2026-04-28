@@ -1,11 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { COMMENT_LEVEL_OPTIONS, SORT_OPTIONS, formatDateTime, formatSourceTitle } from './commentViewerData';
 
 const API_BASE = `http://${window.location.hostname}:8080/api/comments`;
 
 export default function CommentViewer(props) {
-  const { embedded = false, forcedContentId = '', forcedSourceId = '', hideSourceSummary = false } = props;
+  const {
+    embedded = false,
+    forcedContentId = '',
+    forcedSourceId = '',
+    hideSourceSummary = false,
+    autoRefreshIntervalMs = 0,
+  } = props;
   const [sources, setSources] = useState([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [comments, setComments] = useState([]);
@@ -60,14 +66,16 @@ export default function CommentViewer(props) {
     setSelectedSourceId(matched?.source_id || '');
   }, [forcedContentId, forcedSourceId, sources]);
 
-  useEffect(() => {
+  const loadComments = useCallback(async (options = {}) => {
+    const { silent = false, resetDetail = true } = options;
     if (!selectedSourceId) {
       setComments([]);
-      setSelectedComment(null);
-      setDetailOpen(false);
+      if (resetDetail) {
+        setSelectedComment(null);
+        setDetailOpen(false);
+      }
       return;
     }
-
     const params = new URLSearchParams({
       source_id: selectedSourceId,
       limit: '50',
@@ -77,31 +85,50 @@ export default function CommentViewer(props) {
     if (keyword.trim()) params.set('keyword', keyword.trim());
     if (commentLevel) params.set('comment_level', commentLevel);
     if (location.trim()) params.set('location', location.trim());
-
-    const loadComments = async () => {
+    if (!silent) {
       setCommentsLoading(true);
-      try {
-        const response = await fetch(`${API_BASE}?${params.toString()}`);
-        if (!response.ok) {
-          throw new Error('加载评论列表失败');
-        }
-        const body = await response.json();
-        setComments(body.items || []);
+    }
+    try {
+      const response = await fetch(`${API_BASE}?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error('加载评论列表失败');
+      }
+      const body = await response.json();
+      setComments(body.items || []);
+      if (resetDetail) {
         setSelectedComment(null);
         setDetailOpen(false);
-        setError('');
-      } catch (err) {
+      }
+      setError('');
+    } catch (err) {
+      if (!silent) {
         setComments([]);
+      }
+      if (resetDetail) {
         setSelectedComment(null);
         setDetailOpen(false);
-        setError(err instanceof Error ? err.message : '加载评论失败');
-      } finally {
+      }
+      setError(err instanceof Error ? err.message : '加载评论失败');
+    } finally {
+      if (!silent) {
         setCommentsLoading(false);
       }
-    };
+    }
+  }, [selectedSourceId, sort, keyword, commentLevel, location]);
 
-    loadComments();
-  }, [selectedSourceId, keyword, commentLevel, location, sort]);
+  useEffect(() => {
+    loadComments({ silent: false, resetDetail: true });
+  }, [loadComments]);
+
+  useEffect(() => {
+    if (!autoRefreshIntervalMs || autoRefreshIntervalMs < 1000 || !selectedSourceId) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      loadComments({ silent: true, resetDetail: false });
+    }, autoRefreshIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshIntervalMs, selectedSourceId, loadComments]);
 
   const handleSelectComment = async (commentId) => {
     const params = new URLSearchParams({ source_id: selectedSourceId });

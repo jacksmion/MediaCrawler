@@ -259,6 +259,7 @@ export default function MonitorConsole() {
               forcedContentId={selectedItem?.content_id || ''}
               forcedSourceId={forcedSourceId}
               hideSourceSummary
+              autoRefreshIntervalMs={selectedItem?.status === 'running' ? 10000 : 0}
             />
           </div>
         </section>
