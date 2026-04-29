@@ -4,15 +4,19 @@ from runtime.session.models import SessionState
 
 
 class InMemorySessionStore:
-    """Simple store for early-stage migration before DB-backed persistence."""
+    """Per-account session store backed by an in-memory dict."""
 
     def __init__(self) -> None:
-        self._session: SessionState | None = None
+        self._sessions: dict[str, SessionState] = {}
 
     def save(self, session: SessionState) -> SessionState:
-        self._session = session
+        key = session.account_id or session.platform_code
+        self._sessions[key] = session
         return session
 
-    def load(self) -> SessionState | None:
-        return self._session
+    def load(self, account_id: str = "", platform_code: str = "") -> SessionState | None:
+        key = account_id or platform_code
+        return self._sessions.get(key)
 
+    def load_all(self) -> list[SessionState]:
+        return list(self._sessions.values())

@@ -44,6 +44,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
         self.cdp_manager: CDPBrowserManager | None = None
         self.ip_proxy_pool = None
         self._platform_http_proxy: str | None = None
+        self.account_id: str = ""
         self.state_store = StateStore()
         self.task_executor = self._build_task_executor()
 
@@ -167,7 +168,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
         from connectors.base.models import ConnectorContext
 
         return ConnectorContext(
-            account_id=None,
+            account_id=self.account_id or None,
             proxy=self._platform_http_proxy,
             metadata={"source": f"{self.platform_name}_connector_crawler", "job_id": job_id, "task_id": task_id},
         )
@@ -180,7 +181,8 @@ class ConnectorCrawlerBase(AbstractCrawler):
         headless: bool = True,
     ) -> BrowserContext:
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore[arg-type]
+            profile_name = self.account_id or (config.USER_DATA_DIR % config.PLATFORM)  # type: ignore[arg-type]
+            user_data_dir = os.path.join(os.getcwd(), "browser_data", profile_name)
             return await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,
@@ -207,6 +209,7 @@ class ConnectorCrawlerBase(AbstractCrawler):
                 playwright_proxy=playwright_proxy,
                 user_agent=user_agent,
                 headless=headless,
+                account_id=self.account_id,
             )
         except Exception:
             self.cdp_manager = None

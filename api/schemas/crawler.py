@@ -58,6 +58,8 @@ class CrawlerStartRequest(BaseModel):
     headless: bool = False
     sort_type: str = ""  # Sort mode for search (search mode)
     comment_time_filter_h: int = 0  # Max age of comments to crawl in hours (0 = unlimited)
+    account_id: str = ""  # Which account to use for this task
+    task_id: str = ""  # Optional task ID, auto-generated if empty
 
 
 class ResolvedCrawlerConfig(BaseModel):
@@ -78,15 +80,23 @@ class ResolvedCrawlerConfig(BaseModel):
     sort_type: str = ""
     comment_time_filter_h: int = 0
     runtime_override_keys: list[str] = []
+    account_id: str = ""
+
+
+class TaskStatus(BaseModel):
+    """Single task status entry."""
+    task_id: str
+    account_id: str
+    platform: str
+    crawler_type: str
+    status: str  # idle / running / stopping / error / completed
+    started_at: Optional[str] = None
 
 
 class CrawlerStatusResponse(BaseModel):
-    """Crawler status response"""
-    status: Literal["idle", "running", "stopping", "error"]
-    platform: Optional[str] = None
-    crawler_type: Optional[str] = None
-    started_at: Optional[str] = None
-    error_message: Optional[str] = None
+    """Crawler status response - multi-task"""
+    tasks: list[TaskStatus] = []
+    active_count: int = 0
 
 
 class LogEntry(BaseModel):

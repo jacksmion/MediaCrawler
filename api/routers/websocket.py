@@ -74,12 +74,20 @@ broadcast_runtime = BroadcastRuntime()
 
 
 async def log_broadcaster():
-    """Background task: read logs from queue and broadcast"""
-    queue = crawler_manager.get_log_queue()
+    """Background task: read logs from all active task queues and broadcast"""
     while True:
         try:
-            entry = await queue.get()
-            await manager.broadcast(entry.model_dump())
+            got_entry = False
+            for log_service in crawler_manager._log_services.values():
+                queue = log_service.get_log_queue()
+                try:
+                    entry = queue.get_nowait()
+                    await manager.broadcast(entry.model_dump())
+                    got_entry = True
+                except asyncio.QueueEmpty:
+                    pass
+            if not got_entry:
+                await asyncio.sleep(0.2)
         except asyncio.CancelledError:
             break
         except Exception as e:

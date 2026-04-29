@@ -75,11 +75,12 @@ class CDPBrowserManager:
         playwright_proxy: Optional[Dict] = None,
         user_agent: Optional[str] = None,
         headless: bool = False,
+        account_id: str = "",
     ) -> BrowserContext:
         try:
             browser_path = await self._get_browser_path()
             self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
-            await self._launch_browser(browser_path, headless)
+            await self._launch_browser(browser_path, headless, account_id=account_id)
             self._register_cleanup_handlers()
             await self._connect_via_cdp(playwright)
             browser_context = await self._create_browser_context(playwright_proxy, user_agent)
@@ -122,10 +123,14 @@ class CDPBrowserManager:
             utils.logger.warning(f"[CDPBrowserManager] CDP connection test failed: {exc}")
             return False
 
-    async def _launch_browser(self, browser_path: str, headless: bool):
+    async def _launch_browser(self, browser_path: str, headless: bool, account_id: str = ""):
         user_data_dir = None
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", f"cdp_{config.USER_DATA_DIR % config.PLATFORM}")
+            if account_id:
+                profile_name = f"cdp_{account_id}"
+            else:
+                profile_name = f"cdp_{config.USER_DATA_DIR % config.PLATFORM}"  # type: ignore[arg-type]
+            user_data_dir = os.path.join(os.getcwd(), "browser_data", profile_name)
             os.makedirs(user_data_dir, exist_ok=True)
             utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
 

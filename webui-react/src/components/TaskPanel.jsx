@@ -28,21 +28,45 @@ export default function TaskPanel() {
   const [keywords, setKeywords] = useState('');
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [runningTasks, setRunningTasks] = useState([]);
   const [headless, setHeadless] = useState(false);
   const [sortType, setSortType] = useState('general');
   const [commentTime, setCommentTime] = useState(0);
   const [filterKeywords, setFilterKeywords] = useState('');
-  
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+
   const logEndRef = useRef(null);
+  const lastTaskIdRef = useRef('');
+
+  const API_BASE = `http://${window.location.hostname}:8080`;
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
+  // Fetch accounts when platform changes
+  useEffect(() => {
+    const fetchAccounts = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/account/list?platform=${selectedPlatform.id}`);
+        const data = await res.json();
+        const accs = data.accounts || [];
+        setAccounts(accs);
+        if (accs.length > 0 && !accs.find(a => a.account_id === selectedAccountId)) {
+          setSelectedAccountId(accs[0].account_id);
+        } else if (accs.length === 0) {
+          setSelectedAccountId('');
+        }
+      } catch (err) { console.error(err); }
+    };
+    fetchAccounts();
+  }, [selectedPlatform]);
+
   useEffect(() => {
     const wsUrl = `ws://${window.location.hostname}:8080/api/ws/logs`;
     const statusUrl = `ws://${window.location.hostname}:8080/api/ws/status`;
-    
+
     const logWs = new WebSocket(wsUrl);
     logWs.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -52,7 +76,10 @@ export default function TaskPanel() {
     const statusWs = new WebSocket(statusUrl);
     statusWs.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      setIsRunning(data.status === 'running');
+      setIsRunning(data.active_count > 0);
+      if (data.tasks) {
+        setRunningTasks(data.tasks);
+      }
     };
 
     return () => {
@@ -74,7 +101,8 @@ export default function TaskPanel() {
         enable_sub_comments: false,
         sort_type: sortType,
         comment_time_filter_h: parseInt(commentTime) || 0,
-        keywords: selectedMode.id === 'search' ? keywords : filterKeywords
+        keywords: selectedMode.id === 'search' ? keywords : filterKeywords,
+        account_id: selectedAccountId,
       };
 
       // Map input value to correct backend field
@@ -84,16 +112,22 @@ export default function TaskPanel() {
         payload.specified_ids = keywords;
       }
 
-      await fetch(`http://${window.location.hostname}:8080/api/crawler/start`, {
+      const res = await fetch(`${API_BASE}/api/crawler/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      const data = await res.json();
+      if (data.task_id) {
+        lastTaskIdRef.current = data.task_id;
+      }
     } catch (err) { console.error(err); }
   };
 
-  const handleStop = async () => {
-    await fetch(`http://${window.location.hostname}:8080/api/crawler/stop`, { method: 'POST' });
+  const handleStop = async (taskId) => {
+    const tid = taskId || lastTaskIdRef.current;
+    if (!tid) return;
+    await fetch(`${API_BASE}/api/crawler/stop/${tid}`, { method: 'POST' });
   };
 
   const handlePlatformChange = (platform) => {
@@ -103,7 +137,7 @@ export default function TaskPanel() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto w-full space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="space-y-4">
           <label className="block text-sm font-medium text-slate-400">媒体平台</label>
           <Listbox value={selectedPlatform} onChange={handlePlatformChange}>
@@ -130,6 +164,27 @@ export default function TaskPanel() {
               </Transition>
             </div>
           </Listbox>
+        </div>
+
+        <div className="space-y-4">
+          <label className="block text-sm font-medium text-slate-400">选择账号</label>
+          {accounts.length > 0 ? (
+            <select
+              value={selectedAccountId}
+              onChange={e => setSelectedAccountId(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              {accounts.map(acc => (
+                <option key={acc.account_id} value={acc.account_id}>
+                  {acc.name} {acc.status === 'active' ? '✓' : '(未登录)'}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl py-3 px-4 text-sm text-slate-500">
+              暂无账号，请先到「账号管理」添加并登录
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -178,8 +233,8 @@ export default function TaskPanel() {
             </div>
 
             <div className="flex space-x-3">
-              <button 
-                onClick={isRunning ? handleStop : handleStart}
+              <button
+                onClick={() => isRunning ? handleStop() : handleStart()}
                 className={`px-8 py-3 rounded-xl font-bold flex items-center space-x-2 transition-all active:scale-95 shadow-lg ${isRunning ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/40' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'}`}
               >
                 {isRunning ? <><StopIcon className="w-5 h-5" /><span>停止任务</span></> : <><PlayIcon className="w-5 h-5" /><span>开始任务</span></>}
@@ -242,6 +297,31 @@ export default function TaskPanel() {
           </div>
         </div>
       </div>
+
+      {runningTasks.length > 0 && (
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-slate-400">运行中的任务 ({runningTasks.length})</label>
+          <div className="space-y-2">
+            {runningTasks.map(task => (
+              <div key={task.task_id} className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5">
+                <div className="flex items-center space-x-3 text-sm">
+                  <span className="text-slate-300 font-medium">{task.platform}</span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-500 font-mono text-xs">{task.account_id}</span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-500 text-xs">{task.crawler_type}</span>
+                </div>
+                <button
+                  onClick={() => handleStop(task.task_id)}
+                  className="px-3 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 rounded-lg text-xs font-bold transition-colors"
+                >
+                  停止
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
