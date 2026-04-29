@@ -56,8 +56,8 @@ export default function TaskCenter() {
   const pollRef = useRef(null);
   const debounceRef = useRef(null);
 
-  const fetchSources = async () => {
-    if (sourcesCache.length > 0) return sourcesCache;
+  const fetchSources = async (forceRefresh = false) => {
+    if (!forceRefresh && sourcesCache.length > 0) return sourcesCache;
     try {
       const res = await fetch(`${API_BASE}/api/comments/sources`);
       const data = await res.json();
@@ -142,7 +142,7 @@ export default function TaskCenter() {
     try {
       const task = tasks.find(t => t.task_id === taskId);
       if (!task) return;
-      const sources = await fetchSources();
+      const sources = await fetchSources(true);
       const source = findSourceForTask(task, sources);
       setActiveSource(source || null);
       if (!source) { setComments({ items: [], total: 0 }); setCommentLoading(false); return; }
@@ -246,13 +246,7 @@ export default function TaskCenter() {
                   </div>
                   {getStatusBadge(task.status)}
                 </div>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-[10px] text-slate-500">
-                    评论 {(() => {
-                      const source = findSourceForTask(task, sourcesCache);
-                      return source ? source.comment_count : task.comment_count;
-                    })()}
-                  </span>
+                <div className="flex items-center justify-end mt-2">
                   <div className="flex items-center space-x-1">
                     {task.status === 'idle' || task.status === 'completed' || task.status === 'error' ? (
                       <button onClick={e => { e.stopPropagation(); handleAction(task.task_id, 'start'); }}
@@ -297,21 +291,18 @@ export default function TaskCenter() {
           <>
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div>
-                <h3 className="font-bold">
-                  {activeSource && activeSource.platform_content_id ? (
-                    <a
-                      href={getContentUrl(activeSource.platform_code, activeSource.platform_content_id)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="hover:text-blue-400 hover:underline transition-colors cursor-pointer"
-                      title="在原文平台打开作品"
-                    >
-                      {selectedTask.name}
-                    </a>
-                  ) : (
-                    selectedTask.name
-                  )}
-                </h3>
+                <h3 className="font-bold">{selectedTask.name}</h3>
+                {activeSource?.content_title && (
+                  <a
+                    href={getContentUrl(activeSource.platform_code, activeSource.platform_content_id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-slate-400 hover:text-blue-400 hover:underline transition-colors mt-0.5 truncate block"
+                    title="在原文平台打开作品"
+                  >
+                    {activeSource.content_title}
+                  </a>
+                )}
                 <p className="text-xs text-slate-500 mt-0.5">
                   共 {comments.total} 条评论
                   {selectedTask.mode === 'loop' && selectedTask.status === 'running' && ' · 自动刷新中'}
