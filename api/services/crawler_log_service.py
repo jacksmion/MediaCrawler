@@ -40,11 +40,12 @@ class CrawlerLogService:
         except asyncio.QueueEmpty:
             pass
 
-    def create_entry(self, message: str, level: str = "info") -> LogEntry:
+    def create_entry(self, message: str, level: str = "info", task_id: str = "") -> LogEntry:
         """Create and persist a log entry in the in-memory buffer."""
         self._log_id += 1
         entry = LogEntry(
             id=self._log_id,
+            task_id=task_id,
             timestamp=datetime.now().strftime("%H:%M:%S"),
             level=level,
             message=message,

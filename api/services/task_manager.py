@@ -47,7 +47,7 @@ class ApiLogHandler(logging.Handler):
             return
         message = self.format(record)
         level = self.log_service.parse_level(record.levelname)
-        entry = self.log_service.create_entry(message, level)
+        entry = self.log_service.create_entry(message, level, task_id=self.task_id)
         loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.log_service.push(entry), loop=loop))
 
 
@@ -266,14 +266,14 @@ class TaskManager:
                     })
                 except Exception as exc:
                     consecutive_errors += 1
-                    await log_service.push(log_service.create_entry(f"Loop cycle error ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {exc}", "error"))
+                    await log_service.push(log_service.create_entry(f"Loop cycle error ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {exc}", "error", task_id=rt.task_id))
                     task_store.update_task(rt.task_id, {
                         "last_run_at": datetime.now().isoformat(),
                         "last_run_status": "error",
                         "error_message": str(exc),
                     })
                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                        await log_service.push(log_service.create_entry(f"Stopping loop: {MAX_CONSECUTIVE_ERRORS} consecutive errors", "error"))
+                        await log_service.push(log_service.create_entry(f"Stopping loop: {MAX_CONSECUTIVE_ERRORS} consecutive errors", "error", task_id=rt.task_id))
                         rt.status = "error"
                         task_store.update_task(rt.task_id, {"status": "error"})
                         break
@@ -291,15 +291,38 @@ class TaskManager:
         try:
             logger.addHandler(api_log_handler)
             await log_service.push(log_service.create_entry(
-                f"Starting crawl: platform={rt.platform}, account={rt.account_id}, type={rt.crawler_type}",
-                "info",
+                f"开始采集: 平台={rt.platform}, 类型={rt.crawler_type}",
+                "info", task_id=task_id,
             ))
+
+            config = item.get("config", {})
+            keywords = config.get("keywords", "")
+            specified_ids = config.get("specified_ids", "")
+
+            if rt.crawler_type == "search" and keywords:
+                kw_list = [k.strip() for k in keywords.split(",") if k.strip()]
+                await log_service.push(log_service.create_entry(
+                    f"开始搜索关键词: {', '.join(kw_list)}",
+                    "info", task_id=task_id,
+                ))
+            elif rt.crawler_type == "detail" and specified_ids:
+                id_list = [i.strip() for i in specified_ids.split(",") if i.strip()]
+                await log_service.push(log_service.create_entry(
+                    f"开始采集详情，共 {len(id_list)} 个内容",
+                    "info", task_id=task_id,
+                ))
+            elif rt.crawler_type == "creator":
+                creator_ids = config.get("creator_ids", "")
+                id_list = [i.strip() for i in creator_ids.split(",") if i.strip()]
+                await log_service.push(log_service.create_entry(
+                    f"开始采集博主主页，共 {len(id_list)} 个博主",
+                    "info", task_id=task_id,
+                ))
 
             crawler = CrawlerFactory.create_crawler(platform=rt.platform)
             if hasattr(crawler, "account_id"):
                 crawler.account_id = rt.account_id
 
-            config = item.get("config", {})
             payload = {
                 "platform": rt.platform,
                 "crawler_type": rt.crawler_type,
@@ -316,6 +339,13 @@ class TaskManager:
             apply_runtime_request_overrides(payload)
 
             requirement = build_requirement_from_request_payload(payload, source="task_center")
+
+            enable_comments = config.get("enable_comments", True)
+            if enable_comments:
+                await log_service.push(log_service.create_entry(
+                    "开始采集评论", "info", task_id=task_id,
+                ))
+
             result = await crawler.start_with_requirement(requirement)
 
             comment_count = 0
@@ -324,16 +354,35 @@ class TaskManager:
                     if isinstance(task_result, list):
                         comment_count += len(task_result)
 
+            if rt.crawler_type == "search":
+                await log_service.push(log_service.create_entry(
+                    "搜索完成", "success", task_id=task_id,
+                ))
+            elif rt.crawler_type == "detail":
+                await log_service.push(log_service.create_entry(
+                    "详情采集完成", "success", task_id=task_id,
+                ))
+
+            if enable_comments and comment_count > 0:
+                await log_service.push(log_service.create_entry(
+                    f"评论采集完成，共采集 {comment_count} 条评论",
+                    "success", task_id=task_id,
+                ))
+
             task_store.update_task(task_id, {
                 "comment_count": comment_count,
                 "last_run_at": datetime.now().isoformat(),
                 "last_run_status": "success",
             })
-            await log_service.push(log_service.create_entry("Crawl completed successfully", "success"))
+            await log_service.push(log_service.create_entry(
+                "采集完成", "success", task_id=task_id,
+            ))
             return result or {}
 
         except asyncio.CancelledError:
-            await log_service.push(log_service.create_entry("Task cancelled", "warning"))
+            await log_service.push(log_service.create_entry(
+                "任务已取消", "warning", task_id=task_id,
+            ))
             raise
         except Exception as exc:
             rt.status = "error"
@@ -342,7 +391,9 @@ class TaskManager:
                 "last_run_status": "error",
                 "error_message": str(exc),
             })
-            await log_service.push(log_service.create_entry(f"Crawl failed: {exc}", "error"))
+            await log_service.push(log_service.create_entry(
+                f"采集失败: {exc}", "error", task_id=task_id,
+            ))
             raise
         finally:
             logger.removeHandler(api_log_handler)

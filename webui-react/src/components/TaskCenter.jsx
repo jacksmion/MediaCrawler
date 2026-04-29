@@ -45,6 +45,9 @@ export default function TaskCenter() {
   const [sourcesCache, setSourcesCache] = useState([]);
   const [commentKeyword, setCommentKeyword] = useState('');
   const [activeSource, setActiveSource] = useState(null);
+  const [activeTab, setActiveTab] = useState('comments');
+  const [logs, setLogs] = useState([]);
+  const logListRef = useRef(null);
   const [form, setForm] = useState({
     name: '', platform: 'dy', account_id: '', crawler_type: 'search',
     mode: 'once', loop_interval_seconds: 60,
@@ -113,6 +116,27 @@ export default function TaskCenter() {
     return () => ws.close();
   }, []);
 
+  // WebSocket logs
+  useEffect(() => {
+    const ws = new WebSocket(`ws://${window.location.hostname}:8080/api/ws/logs`);
+    ws.onmessage = (event) => {
+      try {
+        const entry = JSON.parse(event.data);
+        if (entry.task_id === selectedTaskId) {
+          setLogs(prev => [...prev, entry]);
+        }
+      } catch (e) { /* ignore */ }
+    };
+    return () => ws.close();
+  }, [selectedTaskId]);
+
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    if (activeTab === 'logs' && logListRef.current) {
+      logListRef.current.scrollTop = logListRef.current.scrollHeight;
+    }
+  }, [logs, activeTab]);
+
   // Auto-poll comments for selected running task
   const selectedTaskStatus = tasks.find(t => t.task_id === selectedTaskId)?.status;
   const selectedTaskMode = tasks.find(t => t.task_id === selectedTaskId)?.mode;
@@ -154,13 +178,24 @@ export default function TaskCenter() {
     setCommentLoading(false);
   };
 
+  const loadTaskLogs = async (taskId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/tasks/${taskId}/logs`);
+      const data = await res.json();
+      setLogs(data.logs || []);
+    } catch (e) { console.error(e); setLogs([]); }
+  };
+
   const handleSelectTask = (taskId) => {
     setSelectedTaskId(taskId);
+    setActiveTab('comments');
     setActiveSource(null);
+    setLogs([]);
     const task = tasks.find(t => t.task_id === taskId);
     const initKw = task?.config?.comment_keyword_filter || '';
     setCommentKeyword(initKw);
     loadComments(taskId, initKw);
+    loadTaskLogs(taskId);
   };
 
   const handleCreate = async () => {
@@ -213,6 +248,22 @@ export default function TaskCenter() {
 
   const selectedTask = tasks.find(t => t.task_id === selectedTaskId);
   const crawlerType = CRAWLER_TYPES.find(c => c.id === form.crawler_type);
+
+  const LEVEL_COLORS = {
+    info: 'text-slate-400',
+    warning: 'text-amber-400',
+    error: 'text-red-400',
+    success: 'text-emerald-400',
+    debug: 'text-slate-600',
+  };
+
+  const LEVEL_LABELS = {
+    info: 'INFO',
+    warning: 'WARN',
+    error: 'ERR',
+    success: 'OK',
+    debug: 'DBG',
+  };
 
   return (
     <div className="flex h-full">
@@ -283,14 +334,14 @@ export default function TaskCenter() {
         </div>
       </div>
 
-      {/* Right Panel - Comments */}
+      {/* Right Panel */}
       <div className="flex-1 flex flex-col min-w-0">
         {!selectedTask ? (
-          <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">选择左侧任务查看评论</div>
+          <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">选择左侧任务查看详情</div>
         ) : (
           <>
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <div>
+              <div className="min-w-0 flex-1">
                 <h3 className="font-bold">{selectedTask.name}</h3>
                 {activeSource?.content_title && (
                   <a
@@ -303,96 +354,116 @@ export default function TaskCenter() {
                     {activeSource.content_title}
                   </a>
                 )}
-                <p className="text-xs text-slate-500 mt-0.5">
-                  共 {comments.total} 条评论
-                  {selectedTask.mode === 'loop' && selectedTask.status === 'running' && ' · 自动刷新中'}
-                </p>
               </div>
-              <button onClick={() => loadComments(selectedTaskId, commentKeyword)} disabled={commentLoading}
-                className="p-2 rounded-lg hover:bg-slate-800 text-slate-400">
-                <ArrowPathIcon className={`w-4 h-4 ${commentLoading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-            {/* Search bar */}
-            <div className="px-4 py-2 border-b border-slate-800/50 flex items-center gap-2 shrink-0">
-              <input
-                type="text"
-                value={commentKeyword}
-                onChange={e => {
-                  const val = e.target.value;
-                  setCommentKeyword(val);
-                  if (debounceRef.current) clearTimeout(debounceRef.current);
-                  debounceRef.current = setTimeout(() => loadComments(selectedTaskId, val), 400);
-                }}
-                placeholder="搜索评论内容关键词..."
-                className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
-              />
-              {commentKeyword && (
+              <div className="flex items-center space-x-1 ml-4 shrink-0">
                 <button
-                  onClick={() => { setCommentKeyword(''); loadComments(selectedTaskId, ''); }}
-                  className="text-slate-500 hover:text-slate-300 text-xs whitespace-nowrap">
-                  清除
+                  onClick={() => setActiveTab('comments')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${activeTab === 'comments' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  评论 {comments.total > 0 ? comments.total : ''}
                 </button>
-              )}
+                <button
+                  onClick={() => setActiveTab('logs')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${activeTab === 'logs' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  日志
+                </button>
+                <button onClick={() => activeTab === 'comments' ? loadComments(selectedTaskId, commentKeyword) : loadTaskLogs(selectedTaskId)}
+                  className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 ml-1">
+                  <ArrowPathIcon className={`w-4 h-4 ${commentLoading && activeTab === 'comments' ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
             </div>
-            <div className="flex-1 overflow-auto">
-              {comments.items.length === 0 ? (
-                <div className="p-6 text-center text-sm text-slate-600">暂无评论数据</div>
-              ) : (
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-700 bg-slate-800/60 sticky top-0 z-10">
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-36">时间</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-28">用户名</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-28">抖音号</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-20">IP归属地</th>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400">评论内容</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comments.items.map((c, i) => (
-                      <tr key={i}
-                        className="border-b border-slate-800/30">
-                        <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
-                          {c.published_at ? new Date(c.published_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <span className="text-sm font-medium text-slate-200 truncate block max-w-[100px]" title={c.author_nickname}>
-                            {c.author_nickname || '匿名'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-[11px] text-slate-500 truncate max-w-[100px]">
-                          {c.author_platform_id ? (
-                            <a
-                              href={`https://www.douyin.com/user/${c.author_platform_id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="hover:text-blue-400 hover:underline inline-block truncate w-full"
-                              title="访问抖音主页"
-                            >
-                              {c.author_short_id || c.author_platform_id}
-                            </a>
-                          ) : (
-                            <span title={c.author_short_id || '-'} className="truncate block w-full">
-                              {c.author_short_id || '-'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
-                          {c.ip_location || '-'}
-                        </td>
-                        <td className="px-4 py-2.5 text-sm text-slate-300">
-                          <div className="flex items-center justify-between gap-2 max-w-[150px] sm:max-w-[250px] lg:max-w-[400px]">
-                            <span className="truncate" title={c.comment_text}>{c.comment_text}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+
+            {/* Comments Tab */}
+            {activeTab === 'comments' && (
+              <>
+                <div className="px-4 py-2 border-b border-slate-800/50 flex items-center gap-2 shrink-0">
+                  <input
+                    type="text"
+                    value={commentKeyword}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setCommentKeyword(val);
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      debounceRef.current = setTimeout(() => loadComments(selectedTaskId, val), 400);
+                    }}
+                    placeholder="搜索评论内容关键词..."
+                    className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
+                  />
+                  {commentKeyword && (
+                    <button
+                      onClick={() => { setCommentKeyword(''); loadComments(selectedTaskId, ''); }}
+                      className="text-slate-500 hover:text-slate-300 text-xs whitespace-nowrap">
+                      清除
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 overflow-auto">
+                  {comments.items.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-slate-600">暂无评论数据</div>
+                  ) : (
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-700 bg-slate-800/60 sticky top-0 z-10">
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-36">时间</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-28">用户名</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-28">抖音号</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 whitespace-nowrap w-20">IP归属地</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400">评论内容</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {comments.items.map((c, i) => (
+                          <tr key={i} className="border-b border-slate-800/30">
+                            <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
+                              {c.published_at ? new Date(c.published_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <span className="text-sm font-medium text-slate-200 truncate block max-w-[100px]" title={c.author_nickname}>
+                                {c.author_nickname || '匿名'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-[11px] text-slate-500 truncate max-w-[100px]">
+                              <span title={c.author_short_id || c.author_platform_id || '-'} className="truncate block w-full">
+                                {c.author_short_id || c.author_platform_id || '-'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
+                              {c.ip_location || '-'}
+                            </td>
+                            <td className="px-4 py-2.5 text-sm text-slate-300">
+                              <div className="flex items-center justify-between gap-2 max-w-[150px] sm:max-w-[250px] lg:max-w-[400px]">
+                                <span className="truncate" title={c.comment_text}>{c.comment_text}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Logs Tab */}
+            {activeTab === 'logs' && (
+              <div ref={logListRef} className="flex-1 overflow-auto font-mono text-xs">
+                {logs.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-slate-600">暂无日志</div>
+                ) : (
+                  logs.map((log, i) => (
+                    <div key={i} className="px-4 py-1.5 border-b border-slate-800/30 flex items-start gap-3">
+                      <span className="text-slate-600 shrink-0">{log.timestamp}</span>
+                      <span className={`shrink-0 font-bold w-10 text-right ${LEVEL_COLORS[log.level] || 'text-slate-400'}`}>
+                        {LEVEL_LABELS[log.level] || 'INFO'}
+                      </span>
+                      <span className="text-slate-300 break-all">{log.message}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

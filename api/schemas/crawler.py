@@ -102,6 +102,7 @@ class CrawlerStatusResponse(BaseModel):
 class LogEntry(BaseModel):
     """Log entry"""
     id: int
+    task_id: str = ""
     timestamp: str
     level: Literal["info", "warning", "error", "success", "debug"]
     message: str
