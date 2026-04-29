@@ -28,6 +28,7 @@ from .crawler import (
     LogEntry,
 )
 from .account import AccountCreateRequest, AccountResponse, AccountListResponse
+from .task import TaskCreateRequest, TaskItemResponse, TaskListResponse
 from .comments import CommentListItemResponse, CommentListResponse, CommentSourceListResponse, CommentSourceResponse
 from .monitors import (
     MonitorItemCreateRequest,
@@ -51,6 +52,9 @@ __all__ = [
     "AccountCreateRequest",
     "AccountResponse",
     "AccountListResponse",
+    "TaskCreateRequest",
+    "TaskItemResponse",
+    "TaskListResponse",
     "CommentSourceResponse",
     "CommentSourceListResponse",
     "CommentListItemResponse",

@@ -25,5 +25,6 @@ from .data import router as data_router
 from .websocket import router as websocket_router
 from .account import router as account_router
 from .config import router as config_router
+from .tasks import router as tasks_router
 
-__all__ = ["comments", "monitors", "comments_router", "monitors_router", "crawler_router", "data_router", "websocket_router", "account_router", "config_router"]
+__all__ = ["comments", "monitors", "comments_router", "monitors_router", "crawler_router", "data_router", "websocket_router", "account_router", "config_router", "tasks_router"]

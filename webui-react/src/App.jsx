@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
-import { 
-  ChartBarIcon, 
-  PlayIcon, 
-  UserGroupIcon, 
+import {
+  ChartBarIcon,
+  UserGroupIcon,
   Cog6ToothIcon,
   CommandLineIcon,
-  ChatBubbleLeftRightIcon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 
 import Dashboard from './components/Dashboard';
-import TaskPanel from './components/TaskPanel';
-import MonitorConsole from './components/MonitorConsole';
+import TaskCenter from './components/TaskCenter';
 import AccountCenter from './components/AccountCenter';
 import Settings from './components/Settings';
 
@@ -20,8 +18,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
-      case 'task': return <TaskPanel />;
-      case 'monitors': return <MonitorConsole />;
+      case 'tasks': return <TaskCenter />;
       case 'account': return <AccountCenter />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
@@ -43,36 +40,30 @@ export default function App() {
         </div>
         
         <nav className="flex-1 px-4 py-4 space-y-1.5 overflow-y-auto">
-          <NavItem 
-            icon={ChartBarIcon} 
-            label="仪表盘" 
-            active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
-          />
-          <NavItem 
-            icon={PlayIcon} 
-            label="采集工场" 
-            active={activeTab === 'task'} 
-            onClick={() => setActiveTab('task')} 
+          <NavItem
+            icon={ChartBarIcon}
+            label="仪表盘"
+            active={activeTab === 'dashboard'}
+            onClick={() => setActiveTab('dashboard')}
           />
           <NavItem
-            icon={ChatBubbleLeftRightIcon}
-            label="监控台"
-            active={activeTab === 'monitors'}
-            onClick={() => setActiveTab('monitors')}
+            icon={Squares2X2Icon}
+            label="任务中心"
+            active={activeTab === 'tasks'}
+            onClick={() => setActiveTab('tasks')}
           />
-          <NavItem 
-            icon={UserGroupIcon} 
-            label="账号管理" 
-            active={activeTab === 'account'} 
-            onClick={() => setActiveTab('account')} 
+          <NavItem
+            icon={UserGroupIcon}
+            label="账号管理"
+            active={activeTab === 'account'}
+            onClick={() => setActiveTab('account')}
           />
           <div className="pt-4 mt-4 border-t border-slate-800/50">
-            <NavItem 
-              icon={Cog6ToothIcon} 
-              label="系统设置" 
-              active={activeTab === 'settings'} 
-              onClick={() => setActiveTab('settings')} 
+            <NavItem
+              icon={Cog6ToothIcon}
+              label="系统设置"
+              active={activeTab === 'settings'}
+              onClick={() => setActiveTab('settings')}
             />
           </div>
         </nav>

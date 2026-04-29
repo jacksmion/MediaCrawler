@@ -22,7 +22,7 @@ from typing import Set, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..services.crawler_manager import crawler_manager
+from ..services.task_manager import task_manager as crawler_manager
 
 router = APIRouter(tags=["websocket"])
 logger = logging.getLogger("MediaCrawler.API")

@@ -10,6 +10,7 @@ from api.schemas.monitors import (
     MonitorLogListResponse,
 )
 from api.services.douyin_monitor_manager import monitor_manager
+from api.services.task_manager import task_manager, MAX_CONCURRENT
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
 
@@ -42,6 +43,8 @@ async def update_monitor(monitor_item_id: str, request: MonitorItemUpdateRequest
 
 @router.post("/{monitor_item_id}/start", response_model=MonitorItemResponse)
 async def start_monitor(monitor_item_id: str):
+    if task_manager.active_count >= MAX_CONCURRENT:
+        raise HTTPException(status_code=409, detail="Concurrent task limit reached. Stop a running task first.")
     try:
         return await monitor_manager.start_item(monitor_item_id)
     except FileNotFoundError as exc:
