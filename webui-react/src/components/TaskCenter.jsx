@@ -420,9 +420,18 @@ export default function TaskCenter() {
                               {c.published_at ? new Date(c.published_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
                             </td>
                             <td className="px-4 py-2.5">
-                              <span className="text-sm font-medium text-slate-200 truncate block max-w-[100px]" title={c.author_nickname}>
-                                {c.author_nickname || '匿名'}
-                              </span>
+                              {activeSource?.platform_code === 'dy' && c.author_short_id ? (
+                                <a href={`https://www.douyin.com/search/${encodeURIComponent(c.author_short_id)}?type=user`}
+                                  target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                                  className="text-sm font-medium text-slate-200 hover:text-blue-400 hover:underline transition-colors truncate block max-w-[100px]"
+                                  title={`搜索抖音号: ${c.author_short_id}`}>
+                                  {c.author_nickname || '匿名'}
+                                </a>
+                              ) : (
+                                <span className="text-sm font-medium text-slate-200 truncate block max-w-[100px]" title={c.author_nickname}>
+                                  {c.author_nickname || '匿名'}
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 text-[11px] text-slate-500 truncate max-w-[100px]">
                               <span title={c.author_short_id || c.author_platform_id || '-'} className="truncate block w-full">

@@ -9,7 +9,8 @@
       "Bash(cd D:/workspace/MediaCrawler && .venv/Scripts/python.exe -c \"from api.schemas.task import TaskCreateRequest, TaskItemResponse, TaskListResponse; print\\('task schemas OK'\\)\" 2>&1)",
       "Bash(cd D:/workspace/MediaCrawler && .venv/Scripts/python.exe -c \"\nfrom api.services.task_manager import TaskManager, task_manager, MAX_CONCURRENT\nprint\\('TaskManager OK, MAX_CONCURRENT =', MAX_CONCURRENT\\)\nprint\\('has get_log_queue:', hasattr\\(task_manager, 'get_log_queue'\\)\\)\nprint\\('has get_status:', hasattr\\(task_manager, 'get_status'\\)\\)\nprint\\('has is_running:', hasattr\\(task_manager, 'is_running'\\)\\)\n\" 2>&1)",
       "Bash(cd D:/workspace/MediaCrawler && .venv/Scripts/python.exe -c \"\nfrom api.app import create_app\napp = create_app\\(\\)\nroutes = sorted\\([r.path for r in app.routes]\\)\ntask_routes = [r for r in routes if 'task' in r]\nprint\\('Task routes:'\\)\nfor r in task_routes:\n    print\\(' ', r\\)\nprint\\(\\)\nprint\\('All OK'\\)\n\" 2>&1)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python -m json.tool)"
     ]
   }
 }
