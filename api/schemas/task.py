@@ -19,6 +19,7 @@ class TaskCreateRequest(BaseModel):
     enable_comments: bool = True
     enable_sub_comments: bool = False
     comment_time_filter_h: int = 0
+    comment_keyword_filter: str = ""  # only show comments containing this keyword
     headless: bool = True
 
 

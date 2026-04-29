@@ -33,14 +33,17 @@ export default function TaskCenter() {
   const [commentLoading, setCommentLoading] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
   const [sourcesCache, setSourcesCache] = useState([]);
+  const [commentKeyword, setCommentKeyword] = useState('');
   const [form, setForm] = useState({
     name: '', platform: 'dy', account_id: '', crawler_type: 'search',
     mode: 'once', loop_interval_seconds: 60,
     keywords: '', specified_ids: '', creator_ids: '',
     enable_comments: true, comment_time_filter_h: 0, headless: true,
+    comment_keyword_filter: '',
   });
 
   const pollRef = useRef(null);
+  const debounceRef = useRef(null);
 
   const fetchSources = async () => {
     if (sourcesCache.length > 0) return sourcesCache;
@@ -107,12 +110,12 @@ export default function TaskCenter() {
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     if (selectedTaskMode === 'loop' && selectedTaskStatus === 'running') {
-      pollRef.current = setInterval(() => loadComments(selectedTaskId), (selectedTaskInterval || 60) * 1000);
+      pollRef.current = setInterval(() => loadComments(selectedTaskId, commentKeyword), (selectedTaskInterval || 60) * 1000);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [selectedTaskId, selectedTaskStatus, selectedTaskMode, selectedTaskInterval]);
+  }, [selectedTaskId, selectedTaskStatus, selectedTaskMode, selectedTaskInterval, commentKeyword]);
 
-  const loadComments = async (taskId) => {
+  const loadComments = async (taskId, kw = '') => {
     setCommentLoading(true);
     try {
       const task = tasks.find(t => t.task_id === taskId);
@@ -120,7 +123,8 @@ export default function TaskCenter() {
       const sources = await fetchSources();
       const source = findSourceForTask(task, sources);
       if (!source) { setComments({ items: [], total: 0 }); setCommentLoading(false); return; }
-      const res = await fetch(`${API_BASE}/api/comments?source_id=${encodeURIComponent(source.source_id)}&limit=50&sort=published_at_desc`);
+      const kwParam = kw ? `&keyword=${encodeURIComponent(kw)}` : '';
+      const res = await fetch(`${API_BASE}/api/comments?source_id=${encodeURIComponent(source.source_id)}&limit=50&sort=published_at_desc${kwParam}`);
       const data = await res.json();
       setComments(data);
     } catch (e) { console.error(e); }
@@ -130,7 +134,10 @@ export default function TaskCenter() {
   const handleSelectTask = (taskId) => {
     setSelectedTaskId(taskId);
     setSelectedComment(null);
-    loadComments(taskId);
+    const task = tasks.find(t => t.task_id === taskId);
+    const initKw = task?.config?.comment_keyword_filter || '';
+    setCommentKeyword(initKw);
+    loadComments(taskId, initKw);
   };
 
   const handleCreate = async () => {
@@ -283,10 +290,32 @@ export default function TaskCenter() {
                   {selectedTask.mode === 'loop' && selectedTask.status === 'running' && ' · 自动刷新中'}
                 </p>
               </div>
-              <button onClick={() => loadComments(selectedTaskId)} disabled={commentLoading}
+              <button onClick={() => loadComments(selectedTaskId, commentKeyword)} disabled={commentLoading}
                 className="p-2 rounded-lg hover:bg-slate-800 text-slate-400">
                 <ArrowPathIcon className={`w-4 h-4 ${commentLoading ? 'animate-spin' : ''}`} />
               </button>
+            </div>
+            {/* Search bar */}
+            <div className="px-4 py-2 border-b border-slate-800/50 flex items-center gap-2 shrink-0">
+              <input
+                type="text"
+                value={commentKeyword}
+                onChange={e => {
+                  const val = e.target.value;
+                  setCommentKeyword(val);
+                  if (debounceRef.current) clearTimeout(debounceRef.current);
+                  debounceRef.current = setTimeout(() => loadComments(selectedTaskId, val), 400);
+                }}
+                placeholder="搜索评论内容关键词..."
+                className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
+              />
+              {commentKeyword && (
+                <button
+                  onClick={() => { setCommentKeyword(''); loadComments(selectedTaskId, ''); }}
+                  className="text-slate-500 hover:text-slate-300 text-xs whitespace-nowrap">
+                  清除
+                </button>
+              )}
             </div>
             <div className="flex-1 overflow-auto">
               {comments.items.length === 0 ? (
@@ -450,6 +479,18 @@ export default function TaskCenter() {
                 onChange={e => setForm(f => ({ ...f, [crawlerType?.key || 'keywords']: e.target.value }))}
                 placeholder={crawlerType?.placeholder} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder-slate-600" />
             </div>
+
+            {form.crawler_type !== 'search' && (
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">
+                  评论关键词过滤
+                  <span className="ml-1 text-slate-600">（只展示包含该关键词的评论）</span>
+                </label>
+                <input type="text" value={form.comment_keyword_filter}
+                  onChange={e => setForm(f => ({ ...f, comment_keyword_filter: e.target.value }))}
+                  placeholder="输入关键词，留空则不过滤" className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder-slate-600" />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs text-slate-400 mb-2">执行模式</label>

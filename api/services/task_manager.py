@@ -96,6 +96,7 @@ class TaskManager:
                 "enable_comments": req.enable_comments,
                 "enable_sub_comments": req.enable_sub_comments,
                 "comment_time_filter_h": req.comment_time_filter_h,
+                "comment_keyword_filter": req.comment_keyword_filter,
                 "headless": req.headless,
             },
         }
