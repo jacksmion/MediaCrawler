@@ -22,9 +22,6 @@ export default function CommentViewer(props) {
   const [sourceFilter, setSourceFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [commentsLoading, setCommentsLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedComment, setSelectedComment] = useState(null);
-  const [detailOpen, setDetailOpen] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -67,13 +64,9 @@ export default function CommentViewer(props) {
   }, [forcedContentId, forcedSourceId, sources]);
 
   const loadComments = useCallback(async (options = {}) => {
-    const { silent = false, resetDetail = true } = options;
+    const { silent = false } = options;
     if (!selectedSourceId) {
       setComments([]);
-      if (resetDetail) {
-        setSelectedComment(null);
-        setDetailOpen(false);
-      }
       return;
     }
     const params = new URLSearchParams({
@@ -95,18 +88,10 @@ export default function CommentViewer(props) {
       }
       const body = await response.json();
       setComments(body.items || []);
-      if (resetDetail) {
-        setSelectedComment(null);
-        setDetailOpen(false);
-      }
       setError('');
     } catch (err) {
       if (!silent) {
         setComments([]);
-      }
-      if (resetDetail) {
-        setSelectedComment(null);
-        setDetailOpen(false);
       }
       setError(err instanceof Error ? err.message : '加载评论失败');
     } finally {
@@ -117,7 +102,7 @@ export default function CommentViewer(props) {
   }, [selectedSourceId, sort, keyword, commentLevel, location]);
 
   useEffect(() => {
-    loadComments({ silent: false, resetDetail: true });
+    loadComments({ silent: false });
   }, [loadComments]);
 
   useEffect(() => {
@@ -125,30 +110,10 @@ export default function CommentViewer(props) {
       return undefined;
     }
     const timer = window.setInterval(() => {
-      loadComments({ silent: true, resetDetail: false });
+      loadComments({ silent: true });
     }, autoRefreshIntervalMs);
     return () => window.clearInterval(timer);
   }, [autoRefreshIntervalMs, selectedSourceId, loadComments]);
-
-  const handleSelectComment = async (commentId) => {
-    const params = new URLSearchParams({ source_id: selectedSourceId });
-    setDetailLoading(true);
-    try {
-      const response = await fetch(`${API_BASE}/${encodeURIComponent(commentId)}?${params.toString()}`);
-      if (!response.ok) {
-        throw new Error('加载评论详情失败');
-      }
-      const body = await response.json();
-      setSelectedComment(body);
-      setDetailOpen(true);
-      setError('');
-    } catch (err) {
-      setSelectedComment(null);
-      setError(err instanceof Error ? err.message : '加载详情失败');
-    } finally {
-      setDetailLoading(false);
-    }
-  };
 
   const visibleSources = sources.filter((source) => {
     if (forcedContentId && String(source.platform_content_id) !== String(forcedContentId)) {
@@ -321,8 +286,7 @@ export default function CommentViewer(props) {
                   comments.map((comment) => (
                     <tr
                       key={comment.comment_id}
-                      onClick={() => handleSelectComment(comment.comment_id)}
-                      className="cursor-pointer transition hover:bg-slate-800/40"
+                      className="transition hover:bg-slate-800/40"
                     >
                       <td className="px-4 py-3 align-top whitespace-nowrap text-[13px] text-slate-400">{formatDateTime(comment.published_at)}</td>
                       <td className="px-4 py-3 align-top">
@@ -330,7 +294,22 @@ export default function CommentViewer(props) {
                       </td>
                       <td className="px-4 py-3 align-top">
                         <div className="max-w-[160px] truncate text-[14px] font-semibold text-slate-100">{comment.author_nickname || '-'}</div>
-                        <div className="mt-1 truncate font-mono text-[11px] text-slate-500">{comment.author_short_id || comment.author_platform_id || '-'}</div>
+                        {comment.author_platform_id ? (
+                          <a
+                            href={`https://www.douyin.com/user/${comment.author_platform_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-1 block truncate font-mono text-[11px] text-slate-500 hover:text-blue-400 hover:underline"
+                            title="访问抖音主页"
+                          >
+                            {comment.author_short_id || comment.author_platform_id}
+                          </a>
+                        ) : (
+                          <div className="mt-1 truncate font-mono text-[11px] text-slate-500">
+                            {comment.author_short_id || '-'}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 align-top text-[13px] text-slate-300">{comment.ip_location || '-'}</td>
                       <td className="px-4 py-3 align-top text-[13px] text-slate-300">
@@ -346,84 +325,6 @@ export default function CommentViewer(props) {
         </section>
       </div>
 
-      {detailOpen ? (
-        <div className="absolute inset-0 z-30 flex justify-end bg-slate-950/55 backdrop-blur-sm">
-          <div className="flex h-full w-[460px] flex-col border-l border-slate-800 bg-slate-900 shadow-2xl shadow-slate-950/50">
-            <header className="flex items-start justify-between border-b border-slate-800 px-5 py-4">
-              <div>
-                <h3 className="text-xl font-bold text-white">评论详情</h3>
-                <p className="mt-1 text-xs text-slate-500">回看完整评论文本与原始 payload</p>
-              </div>
-              <button
-                onClick={() => setDetailOpen(false)}
-                className="rounded-2xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-slate-600 hover:text-slate-100"
-              >
-                关闭
-              </button>
-            </header>
-            <div className="flex-1 overflow-y-auto px-5 py-4">
-              {detailLoading ? (
-                <div className="text-sm text-slate-500">正在加载评论详情...</div>
-              ) : selectedComment ? (
-                <div className="space-y-5">
-                  <DetailBlock label="评论正文" value={selectedComment.comment_text || '-'} />
-                  <DetailGrid
-                    items={[
-                      ['评论 ID', selectedComment.platform_comment_id || '-'],
-                      ['作品 ID', selectedComment.platform_content_id || '-'],
-                      ['用户昵称', selectedComment.author_nickname || '-'],
-                      ['抖音号', selectedComment.author_short_id || selectedComment.author_platform_id || '-'],
-                      ['平台 ID', selectedComment.author_platform_id || '-'],
-                      ['IP 属地', selectedComment.ip_location || '-'],
-                      ['主页地区', selectedComment.author_home_location || '-'],
-                      ['评论层级', selectedComment.comment_level === 2 ? '二级回复' : '一级评论'],
-                      ['父评论', selectedComment.parent_comment_id || '-'],
-                      ['根评论', selectedComment.root_comment_id || '-'],
-                      ['发布时间', formatDateTime(selectedComment.published_at)],
-                      ['点赞数', String(selectedComment.like_count ?? 0)],
-                      ['回复数', String(selectedComment.reply_count ?? 0)],
-                    ]}
-                  />
-                  <DetailBlock label="Metadata" value={JSON.stringify(selectedComment.metadata || {}, null, 2)} monospace />
-                  <DetailBlock label="Raw Payload" value={JSON.stringify(selectedComment.raw_payload || {}, null, 2)} monospace />
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-8 text-center text-sm text-slate-500">
-                  暂无可展示的评论详情。
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DetailBlock({ label, value, monospace = false }) {
-  return (
-    <div>
-      <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">{label}</div>
-      <pre
-        className={`overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/80 p-4 text-sm whitespace-pre-wrap break-words ${
-          monospace ? 'font-mono text-slate-300' : 'text-slate-100'
-        }`}
-      >
-        {value}
-      </pre>
-    </div>
-  );
-}
-
-function DetailGrid({ items }) {
-  return (
-    <div className="grid grid-cols-2 gap-3">
-      {items.map(([label, value]) => (
-        <div key={label} className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
-          <div className="mt-2 break-all text-sm text-slate-100">{value}</div>
-        </div>
-      ))}
     </div>
   );
 }

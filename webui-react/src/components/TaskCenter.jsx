@@ -22,18 +22,29 @@ const CRAWLER_TYPES = [
 
 const API_BASE = `http://${window.location.hostname}:8080`;
 
+const getContentUrl = (platform, contentId) => {
+  switch(platform) {
+    case 'xhs': return `https://www.xiaohongshu.com/explore/${contentId}`;
+    case 'bili': return `https://www.bilibili.com/video/${contentId}`;
+    case 'ks': return `https://www.kuaishou.com/short-video/${contentId}`;
+    case 'wb': return `https://weibo.com/detail/${contentId}`;
+    case 'tieba': return `https://tieba.baidu.com/p/${contentId}`;
+    case 'zhihu': return `https://www.zhihu.com/question/${contentId}`;
+    case 'dy':
+    default: return `https://www.douyin.com/video/${contentId}`;
+  }
+};
+
 export default function TaskCenter() {
   const [tasks, setTasks] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [comments, setComments] = useState({ items: [], total: 0 });
-  const [selectedComment, setSelectedComment] = useState(null);
-  const [replies, setReplies] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [commentLoading, setCommentLoading] = useState(false);
-  const [replyLoading, setReplyLoading] = useState(false);
   const [sourcesCache, setSourcesCache] = useState([]);
   const [commentKeyword, setCommentKeyword] = useState('');
+  const [activeSource, setActiveSource] = useState(null);
   const [form, setForm] = useState({
     name: '', platform: 'dy', account_id: '', crawler_type: 'search',
     mode: 'once', loop_interval_seconds: 60,
@@ -102,15 +113,26 @@ export default function TaskCenter() {
     return () => ws.close();
   }, []);
 
-  // Auto-poll comments for selected running loop task
+  // Auto-poll comments for selected running task
   const selectedTaskStatus = tasks.find(t => t.task_id === selectedTaskId)?.status;
   const selectedTaskMode = tasks.find(t => t.task_id === selectedTaskId)?.mode;
   const selectedTaskInterval = tasks.find(t => t.task_id === selectedTaskId)?.loop_interval_seconds;
+  const prevStatusRef = useRef(selectedTaskStatus);
+
+  useEffect(() => {
+    // Refresh comments immediately when a task finishes
+    if (prevStatusRef.current === 'running' && selectedTaskStatus && selectedTaskStatus !== 'running') {
+      loadComments(selectedTaskId, commentKeyword);
+    }
+    prevStatusRef.current = selectedTaskStatus;
+  }, [selectedTaskStatus, selectedTaskId, commentKeyword]);
 
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (selectedTaskMode === 'loop' && selectedTaskStatus === 'running') {
-      pollRef.current = setInterval(() => loadComments(selectedTaskId, commentKeyword), (selectedTaskInterval || 60) * 1000);
+    if (selectedTaskStatus === 'running') {
+      // Poll every 3 seconds for one-off tasks, or use the loop interval for loop tasks
+      const interval = selectedTaskMode === 'loop' ? Math.max((selectedTaskInterval || 60) * 1000, 3000) : 3000;
+      pollRef.current = setInterval(() => loadComments(selectedTaskId, commentKeyword), interval);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [selectedTaskId, selectedTaskStatus, selectedTaskMode, selectedTaskInterval, commentKeyword]);
@@ -122,6 +144,7 @@ export default function TaskCenter() {
       if (!task) return;
       const sources = await fetchSources();
       const source = findSourceForTask(task, sources);
+      setActiveSource(source || null);
       if (!source) { setComments({ items: [], total: 0 }); setCommentLoading(false); return; }
       const kwParam = kw ? `&keyword=${encodeURIComponent(kw)}` : '';
       const res = await fetch(`${API_BASE}/api/comments?source_id=${encodeURIComponent(source.source_id)}&limit=50&sort=published_at_desc${kwParam}`);
@@ -133,7 +156,7 @@ export default function TaskCenter() {
 
   const handleSelectTask = (taskId) => {
     setSelectedTaskId(taskId);
-    setSelectedComment(null);
+    setActiveSource(null);
     const task = tasks.find(t => t.task_id === taskId);
     const initKw = task?.config?.comment_keyword_filter || '';
     setCommentKeyword(initKw);
@@ -174,22 +197,7 @@ export default function TaskCenter() {
     } catch (e) { console.error(e); }
   };
 
-  const loadReplies = async (comment) => {
-    setReplyLoading(true);
-    setSelectedComment(comment);
-    try {
-      const task = tasks.find(t => t.task_id === selectedTaskId);
-      const sources = await fetchSources();
-      const source = task ? findSourceForTask(task, sources) : null;
-      if (source) {
-        const res = await fetch(`${API_BASE}/api/comments?source_id=${encodeURIComponent(source.source_id)}&keyword=&comment_level=2&limit=50`);
-        const data = await res.json();
-        const commentId = comment.platform_comment_id || comment.comment_id;
-        setReplies((data.items || []).filter(r => r.root_comment_id === commentId || r.parent_comment_id === commentId));
-      }
-    } catch (e) { console.error(e); setReplies([]); }
-    setReplyLoading(false);
-  };
+
 
   const getStatusBadge = (status) => {
     const map = {
@@ -239,7 +247,12 @@ export default function TaskCenter() {
                   {getStatusBadge(task.status)}
                 </div>
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-[10px] text-slate-500">评论 {task.comment_count}</span>
+                  <span className="text-[10px] text-slate-500">
+                    评论 {(() => {
+                      const source = findSourceForTask(task, sourcesCache);
+                      return source ? source.comment_count : task.comment_count;
+                    })()}
+                  </span>
                   <div className="flex items-center space-x-1">
                     {task.status === 'idle' || task.status === 'completed' || task.status === 'error' ? (
                       <button onClick={e => { e.stopPropagation(); handleAction(task.task_id, 'start'); }}
@@ -284,7 +297,21 @@ export default function TaskCenter() {
           <>
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <div>
-                <h3 className="font-bold">{selectedTask.name}</h3>
+                <h3 className="font-bold">
+                  {activeSource && activeSource.platform_content_id ? (
+                    <a
+                      href={getContentUrl(activeSource.platform_code, activeSource.platform_content_id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-blue-400 hover:underline transition-colors cursor-pointer"
+                      title="在原文平台打开作品"
+                    >
+                      {selectedTask.name}
+                    </a>
+                  ) : (
+                    selectedTask.name
+                  )}
+                </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   共 {comments.total} 条评论
                   {selectedTask.mode === 'loop' && selectedTask.status === 'running' && ' · 自动刷新中'}
@@ -334,8 +361,7 @@ export default function TaskCenter() {
                   <tbody>
                     {comments.items.map((c, i) => (
                       <tr key={i}
-                        onClick={() => loadReplies(c)}
-                        className="border-b border-slate-800/30 hover:bg-slate-800/40 cursor-pointer transition-colors">
+                        className="border-b border-slate-800/30">
                         <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
                           {c.published_at ? new Date(c.published_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
                         </td>
@@ -345,21 +371,29 @@ export default function TaskCenter() {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-[11px] text-slate-500 truncate max-w-[100px]">
-                          <span title={c.author_short_id || c.author_platform_id}>
-                            {c.author_short_id || c.author_platform_id || '-'}
-                          </span>
+                          {c.author_platform_id ? (
+                            <a
+                              href={`https://www.douyin.com/user/${c.author_platform_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="hover:text-blue-400 hover:underline inline-block truncate w-full"
+                              title="访问抖音主页"
+                            >
+                              {c.author_short_id || c.author_platform_id}
+                            </a>
+                          ) : (
+                            <span title={c.author_short_id || '-'} className="truncate block w-full">
+                              {c.author_short_id || '-'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-[11px] text-slate-500 whitespace-nowrap">
                           {c.ip_location || '-'}
                         </td>
-                        <td className="px-4 py-2.5 text-sm text-slate-300 max-w-0">
-                          <div className="flex items-center justify-between gap-2">
+                        <td className="px-4 py-2.5 text-sm text-slate-300">
+                          <div className="flex items-center justify-between gap-2 max-w-[150px] sm:max-w-[250px] lg:max-w-[400px]">
                             <span className="truncate" title={c.comment_text}>{c.comment_text}</span>
-                            <div className="flex items-center gap-2 text-[10px] text-slate-600 shrink-0">
-                              <span>❤ {c.like_count || 0}</span>
-                              <span>💬 {c.reply_count || 0}</span>
-                              <ChevronRightIcon className="w-3 h-3 text-slate-700" />
-                            </div>
                           </div>
                         </td>
                       </tr>
@@ -372,62 +406,7 @@ export default function TaskCenter() {
         )}
       </div>
 
-      {/* Comment Detail Drawer */}
-      {selectedComment && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setSelectedComment(null); setReplies([]); }} />
-          <div className="relative w-full max-w-md bg-slate-900 border-l border-slate-700 flex flex-col">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="font-bold text-sm">评论详情</h3>
-              <button onClick={() => { setSelectedComment(null); setReplies([]); }}
-                className="p-1 rounded hover:bg-slate-800 text-slate-400">
-                <XMarkIcon className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {/* Author info */}
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-lg">
-                  {(selectedComment.author_nickname || '?')[0]}
-                </div>
-                <div>
-                  <p className="font-bold text-sm">{selectedComment.author_nickname || '匿名'}</p>
-                  <p className="text-xs text-slate-500">ID: {selectedComment.author_short_id || selectedComment.author_platform_id || '-'}</p>
-                  {selectedComment.ip_location && <p className="text-xs text-slate-500">IP: {selectedComment.ip_location}</p>}
-                </div>
-              </div>
-              {/* Comment text */}
-              <p className="text-sm leading-relaxed">{selectedComment.comment_text}</p>
-              <div className="flex items-center space-x-4 text-xs text-slate-500">
-                <span>❤ {selectedComment.like_count || 0}</span>
-                <span>💬 {selectedComment.reply_count || 0}</span>
-                <span>{selectedComment.published_at ? new Date(selectedComment.published_at).toLocaleString() : ''}</span>
-              </div>
-              {/* Replies */}
-              <div className="border-t border-slate-800 pt-3">
-                <h4 className="text-xs font-bold text-slate-500 mb-3">回复 ({replies.length})</h4>
-                {replyLoading ? (
-                  <p className="text-xs text-slate-600">加载中...</p>
-                ) : replies.length === 0 ? (
-                  <p className="text-xs text-slate-600">暂无回复</p>
-                ) : (
-                  <div className="space-y-3">
-                    {replies.map((r, i) => (
-                      <div key={i} className="pl-3 border-l-2 border-slate-800">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs font-medium">{r.author_nickname || '匿名'}</span>
-                          <span className="text-[10px] text-slate-600">{r.published_at ? new Date(r.published_at).toLocaleString() : ''}</span>
-                        </div>
-                        <p className="text-xs text-slate-300 mt-0.5">{r.comment_text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Create Task Modal */}
       {showCreate && (

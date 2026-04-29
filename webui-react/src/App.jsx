@@ -1,27 +1,23 @@
 import React, { useState } from 'react';
 import {
-  ChartBarIcon,
   UserGroupIcon,
   Cog6ToothIcon,
   CommandLineIcon,
   Squares2X2Icon,
 } from '@heroicons/react/24/outline';
-
-import Dashboard from './components/Dashboard';
 import TaskCenter from './components/TaskCenter';
 import AccountCenter from './components/AccountCenter';
 import Settings from './components/Settings';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('tasks');
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <Dashboard />;
       case 'tasks': return <TaskCenter />;
       case 'account': return <AccountCenter />;
       case 'settings': return <Settings />;
-      default: return <Dashboard />;
+      default: return <TaskCenter />;
     }
   };
 
@@ -29,23 +25,9 @@ export default function App() {
     <div className="flex h-screen overflow-hidden text-slate-200 bg-slate-950 font-sans selection:bg-blue-500/30">
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0">
-        <div className="p-8 flex items-center space-x-3 group cursor-pointer">
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform">
-            <CommandLineIcon className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">MediaCrawler</h1>
-            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Enterprise Edition</p>
-          </div>
-        </div>
+
         
         <nav className="flex-1 px-4 py-4 space-y-1.5 overflow-y-auto">
-          <NavItem
-            icon={ChartBarIcon}
-            label="仪表盘"
-            active={activeTab === 'dashboard'}
-            onClick={() => setActiveTab('dashboard')}
-          />
           <NavItem
             icon={Squares2X2Icon}
             label="任务中心"
@@ -67,14 +49,6 @@ export default function App() {
             />
           </div>
         </nav>
-
-        <div className="p-4 m-4 bg-slate-800/30 rounded-2xl border border-slate-800/50 text-[10px] text-slate-500">
-          <p className="font-bold flex items-center space-x-1 uppercase">
-            <span className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
-            <span>Server: localhost:8080</span>
-          </p>
-          <p className="mt-1">Version 2.0.0-alpha</p>
-        </div>
       </aside>
 
       {/* Main Area */}
